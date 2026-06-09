@@ -86,10 +86,13 @@ def test_update_memory_changes_status(project_root: Path):
     service.init_project()
     created = service.remember(remember_input())
 
-    updated = service.update_memory(created["id"], {"status": "stale", "reason": "Needs review."})
+    updated = service.update_memory(
+        created["id"], {"status": "stale", "reason": "Needs review."}
+    )
 
     assert updated["status"] == "stale"
     assert service.open_memory(created["id"])["status"] == "stale"
+    assert service.list_recent(1)[0]["status"] == "stale"
 
 
 @pytest.mark.parametrize("confidence", [True, False])
@@ -161,6 +164,26 @@ def test_remember_rejects_string_relation_targets(project_root: Path):
     payload["relations"]["supersedes"] = "mem_20260609_001"
 
     with pytest.raises(ValueError, match="relations.supersedes"):
+        service.remember(payload)
+
+
+def test_remember_rejects_malformed_relation_target(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload["relations"]["supersedes"] = ["not-a-memory-id"]
+
+    with pytest.raises(ValueError, match="not-a-memory-id"):
+        service.remember(payload)
+
+
+def test_remember_rejects_missing_required_summary(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload.pop("summary")
+
+    with pytest.raises(ValueError, match="missing required fields: summary"):
         service.remember(payload)
 
 
@@ -245,6 +268,18 @@ def test_update_memory_rejects_string_relation_targets(project_root: Path):
         service.update_memory(
             created["id"],
             {"relations": {"supersedes": "mem_20260609_999"}},
+        )
+
+
+def test_update_memory_rejects_malformed_relation_target(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    created = service.remember(remember_input())
+
+    with pytest.raises(ValueError, match="not-a-memory-id"):
+        service.update_memory(
+            created["id"],
+            {"relations": {"supersedes": ["not-a-memory-id"]}},
         )
 
 

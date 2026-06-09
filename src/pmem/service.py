@@ -9,10 +9,17 @@ from typing import Any
 from pmem.constants import RELATION_KINDS, SOURCE_KINDS
 from pmem.index import MemoryIndex
 from pmem.models import MemoryCard
-from pmem.yaml_io import discover_cards, ensure_project_memory, next_card_identity, write_card
+from pmem.yaml_io import (
+    ID_RE,
+    discover_cards,
+    ensure_project_memory,
+    next_card_identity,
+    write_card,
+)
 
 
 REMEMBER_ID_WRITE_ATTEMPTS = 3
+REMEMBER_REQUIRED_FIELDS = {"content", "summary", "title", "type"}
 
 
 class MemoryNotFoundError(KeyError):
@@ -114,6 +121,7 @@ class MemoryService:
     def _build_card(
         self, card_id: str, payload: dict[str, Any], now: str
     ) -> dict[str, Any]:
+        self._validate_remember_payload(payload)
         source = self._source_from_payload(payload)
         confidence = self._validate_confidence(payload.get("confidence", 0.5))
         if source is None:
@@ -155,6 +163,11 @@ class MemoryService:
             "created_at": now,
             "updated_at": now,
         }
+
+    def _validate_remember_payload(self, payload: dict[str, Any]) -> None:
+        missing = sorted(REMEMBER_REQUIRED_FIELDS.difference(payload))
+        if missing:
+            raise ValueError(f"missing required fields: {', '.join(missing)}")
 
     def _source_from_payload(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         source = payload.get("source")
@@ -207,9 +220,15 @@ class MemoryService:
         for relation, targets in value.items():
             if relation not in RELATION_KINDS:
                 raise ValueError(f"unknown relation: {relation}")
-            relations[relation] = self._validate_string_list(
+            targets = self._validate_string_list(
                 targets, f"relations.{relation}"
             )
+            for target in targets:
+                if not ID_RE.match(target):
+                    raise ValueError(
+                        f"relations.{relation} contains invalid relation target: {target}"
+                    )
+            relations[relation] = targets
         return relations
 
     def _empty_relations(self) -> dict[str, list[str]]:
