@@ -177,6 +177,34 @@ def test_remember_rejects_malformed_relation_target(project_root: Path):
         service.remember(payload)
 
 
+def test_remember_rejects_nonexistent_relation_target(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload["relations"]["supersedes"] = ["mem_20990101_999"]
+
+    with pytest.raises(ValueError, match="mem_20990101_999"):
+        service.remember(payload)
+
+
+def test_remember_rejects_self_relation(
+    project_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload["relations"]["related_to"] = ["mem_20260609_123"]
+
+    monkeypatch.setattr(
+        service_module,
+        "next_card_identity",
+        lambda _project_root, _date: ("mem_20260609_123", 123),
+    )
+
+    with pytest.raises(ValueError, match="mem_20260609_123"):
+        service.remember(payload)
+
+
 def test_remember_rejects_missing_required_summary(project_root: Path):
     service = MemoryService(project_root)
     service.init_project()
@@ -283,6 +311,56 @@ def test_update_memory_rejects_malformed_relation_target(project_root: Path):
         )
 
 
+def test_update_memory_rejects_nonexistent_relation_target(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    created = service.remember(remember_input())
+
+    with pytest.raises(ValueError, match="mem_20990101_999"):
+        service.update_memory(
+            created["id"],
+            {"relations": {"supersedes": ["mem_20990101_999"]}},
+        )
+
+
+def test_update_memory_rejects_self_relation(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    created = service.remember(remember_input())
+
+    with pytest.raises(ValueError, match=created["id"]):
+        service.update_memory(
+            created["id"],
+            {"relations": {"related_to": [created["id"]]}},
+        )
+
+
+def test_update_memory_accepts_existing_relation_target(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    source = service.remember(remember_input())
+    target = service.remember(remember_input())
+
+    updated = service.update_memory(
+        source["id"],
+        {"relations": {"related_to": [target["id"]]}},
+    )
+
+    assert updated["relations"]["related_to"] == [target["id"]]
+    assert service.open_memory(source["id"])["relations"]["related_to"] == [
+        target["id"]
+    ]
+
+
+def test_update_memory_rejects_unknown_update_key(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    created = service.remember(remember_input())
+
+    with pytest.raises(ValueError, match="stattus"):
+        service.update_memory(created["id"], {"stattus": "stale"})
+
+
 def test_update_memory_rejects_non_mapping_relations(project_root: Path):
     service = MemoryService(project_root)
     service.init_project()
@@ -355,32 +433,35 @@ def test_update_memory_rolls_back_yaml_when_index_upsert_fails(
 def test_remember_notification_includes_superseded_relation(project_root: Path):
     service = MemoryService(project_root)
     service.init_project()
+    target = service.remember(remember_input())
     payload = remember_input()
-    payload["relations"]["supersedes"] = ["mem_20260609_001"]
+    payload["relations"]["supersedes"] = [target["id"]]
 
     result = service.remember(payload)
 
-    assert "mem_20260609_001" in result["notification"]
+    assert target["id"] in result["notification"]
     assert "Supersedes" in result["notification"]
 
 
 def test_remember_notification_includes_superseded_by_relation(project_root: Path):
     service = MemoryService(project_root)
     service.init_project()
+    target = service.remember(remember_input())
     payload = remember_input()
-    payload["relations"]["superseded_by"] = ["mem_20260609_999"]
+    payload["relations"]["superseded_by"] = [target["id"]]
 
     result = service.remember(payload)
 
-    assert "mem_20260609_999" in result["notification"]
+    assert target["id"] in result["notification"]
     assert "Superseded by" in result["notification"]
 
 
 def test_remember_does_not_mutate_payload(project_root: Path):
     service = MemoryService(project_root)
     service.init_project()
+    target = service.remember(remember_input())
     payload = remember_input()
-    payload["relations"]["superseded_by"] = ["mem_20260609_999"]
+    payload["relations"]["superseded_by"] = [target["id"]]
     original = deepcopy(payload)
 
     service.remember(payload)

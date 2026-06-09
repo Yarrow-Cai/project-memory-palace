@@ -20,6 +20,7 @@ from pmem.yaml_io import (
 
 REMEMBER_ID_WRITE_ATTEMPTS = 3
 REMEMBER_REQUIRED_FIELDS = {"content", "summary", "title", "type"}
+UPDATE_ALLOWED_FIELDS = {"confidence", "reason", "relations", "status", "tags"}
 
 
 class MemoryNotFoundError(KeyError):
@@ -87,6 +88,7 @@ class MemoryService:
 
     def update_memory(self, memory_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         existing = self.open_memory(memory_id)
+        self._validate_update_keys(updates)
         data = deepcopy(existing)
         if "status" in updates:
             data["status"] = updates["status"]
@@ -97,7 +99,9 @@ class MemoryService:
         if "relations" in updates:
             relations = data.setdefault("relations", self._empty_relations())
             for relation, targets in self._validate_relation_items(
-                updates["relations"]
+                updates["relations"],
+                source_id=memory_id,
+                allowed_target_ids=self._existing_card_ids(),
             ).items():
                 current = list(relations.get(relation, []))
                 for target in targets:
@@ -143,7 +147,9 @@ class MemoryService:
         relations = self._empty_relations()
         if payload.get("relations") is not None:
             for relation, targets in self._validate_relation_items(
-                payload["relations"]
+                payload["relations"],
+                source_id=card_id,
+                allowed_target_ids=self._existing_card_ids(),
             ).items():
                 relations[relation] = targets
 
@@ -168,6 +174,11 @@ class MemoryService:
         missing = sorted(REMEMBER_REQUIRED_FIELDS.difference(payload))
         if missing:
             raise ValueError(f"missing required fields: {', '.join(missing)}")
+
+    def _validate_update_keys(self, updates: dict[str, Any]) -> None:
+        unknown_keys = sorted(set(updates).difference(UPDATE_ALLOWED_FIELDS))
+        if unknown_keys:
+            raise ValueError(f"unknown update key: {unknown_keys[0]}")
 
     def _source_from_payload(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         source = payload.get("source")
@@ -212,7 +223,13 @@ class MemoryService:
             raise ValueError(f"{field_name} must be a list of strings")
         return list(value)
 
-    def _validate_relation_items(self, value: Any) -> dict[str, list[str]]:
+    def _validate_relation_items(
+        self,
+        value: Any,
+        *,
+        source_id: str | None = None,
+        allowed_target_ids: set[str] | None = None,
+    ) -> dict[str, list[str]]:
         if not isinstance(value, Mapping):
             raise ValueError("relations must be a mapping")
 
@@ -228,8 +245,19 @@ class MemoryService:
                     raise ValueError(
                         f"relations.{relation} contains invalid relation target: {target}"
                     )
+                if target == source_id:
+                    raise ValueError(
+                        f"relations.{relation} contains self relation target: {target}"
+                    )
+                if allowed_target_ids is not None and target not in allowed_target_ids:
+                    raise ValueError(
+                        f"relations.{relation} contains unknown relation target: {target}"
+                    )
             relations[relation] = targets
         return relations
+
+    def _existing_card_ids(self) -> set[str]:
+        return {card.id for card in discover_cards(self.project_root)}
 
     def _empty_relations(self) -> dict[str, list[str]]:
         return {relation: [] for relation in RELATION_KINDS}
