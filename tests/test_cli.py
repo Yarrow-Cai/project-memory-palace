@@ -44,4 +44,5 @@ relations:
     output = capsys.readouterr().out
 
     assert "YAML storage" in output
+    assert "YAML is the source of truth." in output
     assert "SQLite is only an index" not in output
