@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pmem.constants import RELATION_KINDS
+from pmem.constants import RELATION_KINDS, SOURCE_KINDS
 from pmem.index import MemoryIndex
 from pmem.models import MemoryCard
 from pmem.yaml_io import discover_cards, ensure_project_memory, next_card_identity, write_card
@@ -116,7 +116,7 @@ class MemoryService:
     ) -> dict[str, Any]:
         source = self._source_from_payload(payload)
         confidence = self._validate_confidence(payload.get("confidence", 0.5))
-        if not source:
+        if source is None:
             source = {
                 "kind": "analysis",
                 "description": "Source was not supplied by caller.",
@@ -162,7 +162,19 @@ class MemoryService:
             return None
         if not isinstance(source, Mapping):
             raise ValueError("source must be a mapping")
-        return dict(deepcopy(source))
+        source = dict(deepcopy(source))
+        if "kind" not in source:
+            raise ValueError("source.kind is required")
+        if source["kind"] not in SOURCE_KINDS:
+            raise ValueError(
+                f"source.kind must be one of: {', '.join(sorted(SOURCE_KINDS))}"
+            )
+        if "description" not in source:
+            raise ValueError("source.description is required")
+        description = source["description"]
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError("source.description must be a non-empty string")
+        return source
 
     def _scope_from_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         scope = payload.get("scope")

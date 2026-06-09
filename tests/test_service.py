@@ -174,6 +174,46 @@ def test_remember_rejects_non_mapping_source(project_root: Path):
         service.remember(payload)
 
 
+def test_remember_rejects_empty_explicit_source(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload["source"] = {}
+
+    with pytest.raises(ValueError, match="source"):
+        service.remember(payload)
+
+
+def test_remember_rejects_source_missing_kind(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload["source"].pop("kind")
+
+    with pytest.raises(ValueError, match="source.kind"):
+        service.remember(payload)
+
+
+def test_remember_rejects_source_missing_description(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload["source"].pop("description")
+
+    with pytest.raises(ValueError, match="source.description"):
+        service.remember(payload)
+
+
+def test_remember_rejects_invalid_source_kind(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload["source"]["kind"] = "invalid"
+
+    with pytest.raises(ValueError, match="source.kind"):
+        service.remember(payload)
+
+
 def test_remember_rejects_non_mapping_scope(project_root: Path):
     service = MemoryService(project_root)
     service.init_project()
