@@ -9,6 +9,39 @@ import yaml
 
 from pmem.audit import audit_project
 from pmem.service import MemoryNotFoundError, MemoryService
+from pmem.yaml_io import assert_memory_layout
+
+
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "limit must be a positive integer"
+        ) from error
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("limit must be a positive integer")
+    return parsed
+
+
+def _load_remember_payload(path: Path) -> dict:
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        raise ValueError(f"invalid YAML file {path}: {error}") from error
+    if payload is None:
+        raise ValueError(f"invalid YAML file {path}: card file is empty")
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"invalid YAML file {path}: card file must contain a mapping"
+        )
+    return payload
+
+
+def _error_message(error: Exception) -> str:
+    if isinstance(error, MemoryNotFoundError) and error.args:
+        return str(error.args[0])
+    return str(error)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,13 +60,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     search = subcommands.add_parser("search")
     search.add_argument("query")
-    search.add_argument("--limit", type=int, default=5)
+    search.add_argument("--limit", type=_positive_int, default=5)
 
     open_cmd = subcommands.add_parser("open")
     open_cmd.add_argument("id")
 
     recent = subcommands.add_parser("recent")
-    recent.add_argument("--limit", type=int, default=10)
+    recent.add_argument("--limit", type=_positive_int, default=10)
 
     update = subcommands.add_parser("update")
     update.add_argument("id")
@@ -46,18 +79,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    try:
+        args = build_parser().parse_args(argv)
+    except SystemExit as error:
+        return error.code if isinstance(error.code, int) else 2
+
     project_root = Path(args.project_root)
-    service = MemoryService(project_root)
     try:
         if args.command == "init":
+            service = MemoryService(project_root)
             service.init_project()
             print("Initialized project memory.")
         elif args.command == "remember":
-            payload = yaml.safe_load(Path(args.file).read_text(encoding="utf-8"))
+            payload = _load_remember_payload(Path(args.file))
+            service = MemoryService(project_root)
             result = service.remember(payload)
             print(result["notification"])
         elif args.command == "search":
+            assert_memory_layout(project_root)
+            service = MemoryService(project_root)
             results = service.recall(args.query, {}, args.limit)
             print(
                 yaml.safe_dump(
@@ -67,6 +107,8 @@ def run(argv: list[str] | None = None) -> int:
                 )
             )
         elif args.command == "open":
+            assert_memory_layout(project_root)
+            service = MemoryService(project_root)
             print(
                 yaml.safe_dump(
                     service.open_memory(args.id),
@@ -75,6 +117,8 @@ def run(argv: list[str] | None = None) -> int:
                 )
             )
         elif args.command == "recent":
+            assert_memory_layout(project_root)
+            service = MemoryService(project_root)
             print(
                 yaml.safe_dump(
                     {"results": service.list_recent(args.limit)},
@@ -83,6 +127,7 @@ def run(argv: list[str] | None = None) -> int:
                 )
             )
         elif args.command == "update":
+            service = MemoryService(project_root)
             updates = {}
             if args.status:
                 updates["status"] = args.status
@@ -96,13 +141,15 @@ def run(argv: list[str] | None = None) -> int:
                 )
             )
         elif args.command == "rebuild-index":
+            service = MemoryService(project_root)
             service.rebuild_index()
             print("Rebuilt memory index.")
         elif args.command == "audit":
+            assert_memory_layout(project_root)
             print(json.dumps({"issues": audit_project(project_root)}, indent=2))
         return 0
     except (FileNotFoundError, MemoryNotFoundError, ValueError) as error:
-        print(f"error: {error}", file=sys.stderr)
+        print(f"error: {_error_message(error)}", file=sys.stderr)
         return 1
 
 
