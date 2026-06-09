@@ -26,7 +26,11 @@ def _positive_int(value: str) -> int:
 
 def _load_remember_payload(path: Path) -> dict:
     try:
-        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ValueError(f"unable to read YAML file {path}: {error}") from error
+    try:
+        payload = yaml.safe_load(text)
     except yaml.YAMLError as error:
         raise ValueError(f"invalid YAML file {path}: {error}") from error
     if payload is None:
@@ -127,12 +131,15 @@ def run(argv: list[str] | None = None) -> int:
                 )
             )
         elif args.command == "update":
-            service = MemoryService(project_root)
             updates = {}
-            if args.status:
+            if args.status is not None:
                 updates["status"] = args.status
             if args.confidence is not None:
                 updates["confidence"] = args.confidence
+            if not updates:
+                raise ValueError("update requires at least one update flag")
+            assert_memory_layout(project_root)
+            service = MemoryService(project_root)
             print(
                 yaml.safe_dump(
                     service.update_memory(args.id, updates),
@@ -141,6 +148,7 @@ def run(argv: list[str] | None = None) -> int:
                 )
             )
         elif args.command == "rebuild-index":
+            assert_memory_layout(project_root)
             service = MemoryService(project_root)
             service.rebuild_index()
             print("Rebuilt memory index.")
