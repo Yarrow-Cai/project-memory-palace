@@ -17,10 +17,15 @@ dependencies = [
 dev = [
   "pytest>=8.0"
 ]
+gui = [
+  "pystray>=0.19",
+  "Pillow>=12.0"
+]
 
 [project.scripts]
 pmem = "pmem.cli:main"
 pmem-mcp = "pmem.mcp_server:main"
+pmem-gui = "pmem.gui:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
