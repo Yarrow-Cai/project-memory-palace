@@ -75,6 +75,17 @@ def test_mcp_update_memory_rejects_empty_updates(project_root: Path):
         mcp_server.update_memory(str(project_root), created["id"], {})
 
 
+def test_mcp_update_memory_rejects_reason_only_update(project_root: Path):
+    created = mcp_server.remember(str(project_root), memory_payload())
+
+    with pytest.raises(ValueError, match="one change"):
+        mcp_server.update_memory(
+            str(project_root),
+            created["id"],
+            {"reason": "No persisted field changed."},
+        )
+
+
 @pytest.mark.parametrize(
     ("tool", "args"),
     [

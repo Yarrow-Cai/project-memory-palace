@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from pmem.constants import (
@@ -15,6 +16,9 @@ from pmem.constants import (
 
 class ValidationError(ValueError):
     """Raised when a memory card does not match the required schema."""
+
+
+MEMORY_ID_RE = re.compile(r"^mem_\d{8}_\d{3}$")
 
 
 def _require_mapping(value: Any, field_name: str) -> dict:
@@ -63,6 +67,8 @@ def validate_card_data(data: Any) -> None:
     for field_name in ("id", "title", "summary", "content", "created_at", "updated_at"):
         if not isinstance(data[field_name], str) or not data[field_name].strip():
             raise ValidationError(f"{field_name} must be a non-empty string")
+    if not MEMORY_ID_RE.match(data["id"]):
+        raise ValidationError("id must match mem_YYYYMMDD_NNN")
 
     source = _require_mapping(data["source"], "source")
     if source.get("kind") not in SOURCE_KINDS:

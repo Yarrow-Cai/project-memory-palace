@@ -92,29 +92,39 @@ class MemoryService:
         self._validate_update_keys(updates)
         existing = self.open_memory(memory_id)
         data = deepcopy(existing)
+        changed = False
+        existing_card_ids = self._existing_card_ids()
         if "status" in updates:
+            changed = changed or updates["status"] != data["status"]
             data["status"] = updates["status"]
         if "confidence" in updates:
-            data["confidence"] = self._validate_confidence(updates["confidence"])
+            confidence = self._validate_confidence(updates["confidence"])
+            changed = changed or confidence != data["confidence"]
+            data["confidence"] = confidence
         if "tags" in updates:
-            data["tags"] = self._validate_string_list(updates["tags"], "tags")
+            tags = self._validate_string_list(updates["tags"], "tags")
+            changed = changed or tags != data["tags"]
+            data["tags"] = tags
         if "relations" in updates:
             relations = data.setdefault("relations", self._empty_relations())
             for relation, targets in self._validate_relation_items(
                 updates["relations"],
                 source_id=memory_id,
-                allowed_target_ids=self._existing_card_ids(),
+                allowed_target_ids=existing_card_ids,
             ).items():
                 current = list(relations.get(relation, []))
                 for target in targets:
                     if target not in current:
                         current.append(target)
+                        changed = True
                 relations[relation] = current
         self._validate_relation_items(
             data["relations"],
             source_id=memory_id,
-            allowed_target_ids=self._existing_card_ids(),
+            allowed_target_ids=existing_card_ids,
         )
+        if not changed:
+            raise ValueError("updates must contain at least one change")
         data["updated_at"] = self._now()
         write_card(self.project_root, data, overwrite=True)
         card = MemoryCard.from_dict(data)

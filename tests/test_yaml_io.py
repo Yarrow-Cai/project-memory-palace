@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 from pmem.yaml_io import (
     assert_memory_layout,
@@ -95,6 +96,47 @@ def test_discover_cards_returns_sorted_cards(project_root: Path):
     cards = discover_cards(project_root)
 
     assert [card.id for card in cards] == ["mem_20260609_001", "mem_20260609_002"]
+
+
+def test_discover_cards_rejects_duplicate_ids(project_root: Path):
+    ensure_project_memory(project_root)
+    first = card_data("mem_20260609_001")
+    second = card_data("mem_20260609_001")
+    second["type"] = "bugfix"
+    cards_path = project_root / ".project-memory" / "cards"
+    (cards_path / "2026-06-09_001_decision.yaml").write_text(
+        yaml.safe_dump(first),
+        encoding="utf-8",
+    )
+    (cards_path / "2026-06-09_001_bugfix.yaml").write_text(
+        yaml.safe_dump(second),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate memory id"):
+        discover_cards(project_root)
+
+
+def test_discover_cards_rejects_filename_mismatch(project_root: Path):
+    ensure_project_memory(project_root)
+    path = project_root / ".project-memory" / "cards" / "wrong.yaml"
+    path.write_text(yaml.safe_dump(card_data()), encoding="utf-8")
+
+    with pytest.raises(ValueError) as error:
+        discover_cards(project_root)
+
+    assert "filename must be 2026-06-09_001_decision.yaml" in str(error.value)
+
+
+def test_discover_cards_rejects_yaml_directory(project_root: Path):
+    ensure_project_memory(project_root)
+    path = project_root / ".project-memory" / "cards" / "bad.yaml"
+    path.mkdir()
+
+    with pytest.raises(ValueError) as error:
+        discover_cards(project_root)
+
+    assert "path is not a file" in str(error.value)
 
 
 def test_discover_cards_requires_initialized_layout(project_root: Path):

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from contextlib import suppress
+import os
 import re
+import tempfile
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -40,16 +43,39 @@ def write_card(project_root: Path, data: dict[str, Any], overwrite: bool = False
     path = cards_dir(project_root) / card_filename(card.to_dict())
     if path.exists() and not overwrite:
         raise FileExistsError(f"memory card already exists: {path}")
-    path.write_text(
-        yaml.safe_dump(card.to_dict(), sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
+    content = yaml.safe_dump(card.to_dict(), sort_keys=False, allow_unicode=True)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp_file:
+            tmp_path = Path(tmp_file.name)
+            tmp_file.write(content)
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+        if path.exists() and not overwrite:
+            raise FileExistsError(f"memory card already exists: {path}")
+        tmp_path.replace(path)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            with suppress(OSError):
+                tmp_path.unlink()
     return path
 
 
 def read_card(path: Path) -> MemoryCard:
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ValueError(f"invalid card file {path}: {error}") from error
+    try:
+        data = yaml.safe_load(raw)
     except yaml.YAMLError as error:
         raise ValueError(f"invalid card file {path}: {error}") from error
     if not isinstance(data, dict):
@@ -62,7 +88,23 @@ def read_card(path: Path) -> MemoryCard:
 
 def discover_cards(project_root: Path) -> list[MemoryCard]:
     assert_memory_layout(project_root)
-    cards = [read_card(path) for path in cards_dir(project_root).glob("*.yaml")]
+    cards: list[MemoryCard] = []
+    seen_ids: dict[str, Path] = {}
+    for path in cards_dir(project_root).glob("*.yaml"):
+        if not path.is_file():
+            raise ValueError(f"invalid card file {path}: path is not a file")
+        card = read_card(path)
+        expected_name = card_filename(card.to_dict())
+        if path.name != expected_name:
+            raise ValueError(
+                f"invalid card file {path}: filename must be {expected_name}"
+            )
+        if card.id in seen_ids:
+            raise ValueError(
+                f"duplicate memory id {card.id}: {seen_ids[card.id]} and {path}"
+            )
+        seen_ids[card.id] = path
+        cards.append(card)
     return sorted(cards, key=lambda card: card.id)
 
 

@@ -61,6 +61,16 @@ def test_validate_card_data_rejects_unknown_type():
     assert "type" in str(error.value)
 
 
+def test_validate_card_data_rejects_invalid_memory_id():
+    data = valid_card_data()
+    data["id"] = "bad-id"
+
+    with pytest.raises(ValidationError) as error:
+        validate_card_data(data)
+
+    assert "id" in str(error.value)
+
+
 def test_validate_card_data_rejects_out_of_range_confidence():
     data = valid_card_data()
     data["confidence"] = 1.2

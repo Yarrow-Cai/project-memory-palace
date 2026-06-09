@@ -156,7 +156,7 @@ def run(argv: list[str] | None = None) -> int:
             assert_memory_layout(project_root)
             print(json.dumps({"issues": audit_project(project_root)}, indent=2))
         return 0
-    except (FileNotFoundError, MemoryNotFoundError, ValueError) as error:
+    except (OSError, MemoryNotFoundError, ValueError) as error:
         print(f"error: {_error_message(error)}", file=sys.stderr)
         return 1
 

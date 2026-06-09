@@ -128,6 +128,26 @@ def test_update_memory_rejects_empty_updates_before_open(
         service.update_memory("mem_20990101_999", {})
 
 
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"reason": "No persisted field changed."},
+        {"relations": {}},
+        {"status": "active"},
+    ],
+)
+def test_update_memory_rejects_no_effect_updates(project_root: Path, updates: dict):
+    service = MemoryService(project_root)
+    service.init_project()
+    created = service.remember(remember_input())
+    before = service.open_memory(created["id"])
+
+    with pytest.raises(ValueError, match="one change"):
+        service.update_memory(created["id"], updates)
+
+    assert service.open_memory(created["id"]) == before
+
+
 @pytest.mark.parametrize("confidence", [True, False])
 def test_remember_rejects_bool_confidence(project_root: Path, confidence: bool):
     service = MemoryService(project_root)

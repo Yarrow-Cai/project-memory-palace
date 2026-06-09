@@ -56,6 +56,17 @@ def test_cli_init(project_root: Path):
     assert (project_root / ".project-memory" / "cards").is_dir()
 
 
+def test_cli_init_file_project_root_returns_error(project_root: Path, capsys):
+    project_root.parent.mkdir(parents=True, exist_ok=True)
+    project_root.write_text("", encoding="utf-8")
+
+    code = run(["--project-root", str(project_root), "init"])
+
+    assert code == 1
+    assert "error:" in capsys.readouterr().err
+    assert project_root.is_file()
+
+
 def test_cli_remember_and_search(project_root: Path, capsys):
     run(["--project-root", str(project_root), "init"])
     card_file = project_root / "card.yaml"
@@ -244,6 +255,17 @@ def test_cli_rebuild_index_uninitialized_project_has_no_side_effect(
     assert code == 1
     assert "error:" in capsys.readouterr().err
     assert_memory_not_created(project_root)
+
+
+def test_cli_audit_reports_invalid_card_directory(project_root: Path, capsys):
+    run(["--project-root", str(project_root), "init"])
+    capsys.readouterr()
+    (project_root / ".project-memory" / "cards" / "bad.yaml").mkdir()
+
+    code = run(["--project-root", str(project_root), "audit"])
+
+    assert code == 1
+    assert "path is not a file" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
