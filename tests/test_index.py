@@ -73,6 +73,39 @@ def test_search_filters_by_path(project_root: Path):
     assert [row["id"] for row in results] == ["mem_20260609_002"]
 
 
+def test_search_accepts_string_path_filter(project_root: Path):
+    ensure_project_memory(project_root)
+    write_card(
+        project_root,
+        card_data("mem_20260609_001", "YAML storage", "yaml", "src/storage.py"),
+    )
+    write_card(
+        project_root,
+        card_data("mem_20260609_002", "MCP server", "mcp", "src/mcp_server.py"),
+    )
+
+    index = MemoryIndex(project_root)
+    index.rebuild()
+
+    results = index.search("server", {"paths": "src/mcp_server.py"}, 5)
+    assert [row["id"] for row in results] == ["mem_20260609_002"]
+
+
+@pytest.mark.parametrize("paths", [[None], [""]])
+def test_search_rejects_invalid_path_filters(project_root: Path, paths: list):
+    ensure_project_memory(project_root)
+    write_card(
+        project_root,
+        card_data("mem_20260609_001", "YAML storage", "yaml", "src/storage.py"),
+    )
+
+    index = MemoryIndex(project_root)
+    index.rebuild()
+
+    with pytest.raises(ValueError, match="paths"):
+        index.search("YAML", {"paths": paths}, 5)
+
+
 def test_recent_returns_newest_first(project_root: Path):
     ensure_project_memory(project_root)
     write_card(project_root, card_data("mem_20260609_001", "First", "one", "a.py"))

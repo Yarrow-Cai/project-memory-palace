@@ -42,6 +42,24 @@ def _normalize_status_filter(filters: dict[str, Any]) -> list[str]:
     return statuses
 
 
+def _normalize_path_filter(filters: dict[str, Any]) -> list[str]:
+    if "paths" not in filters or filters["paths"] is None:
+        return []
+
+    raw_paths = filters["paths"]
+    if isinstance(raw_paths, str):
+        if not raw_paths:
+            raise ValueError("paths filter must contain only non-empty strings")
+        return [raw_paths]
+    if isinstance(raw_paths, list):
+        if not raw_paths:
+            return []
+        if any(not isinstance(path, str) or not path for path in raw_paths):
+            raise ValueError("paths filter must contain only non-empty strings")
+        return raw_paths
+    raise ValueError("paths filter must be a string or a list of strings")
+
+
 class MemoryIndex:
     def __init__(self, project_root: Path):
         self.project_root = project_root
@@ -215,10 +233,10 @@ class MemoryIndex:
         self.initialize()
         fts_query = _plain_text_fts_query(query)
         status_filter = _normalize_status_filter(filters)
+        path_filter = _normalize_path_filter(filters)
         if fts_query is None:
             return []
 
-        path_filter = filters.get("paths") or []
         params: list[Any] = [fts_query]
         where = ["m.status IN ({})".format(",".join("?" for _ in status_filter))]
         params.extend(status_filter)
