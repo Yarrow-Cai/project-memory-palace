@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,7 +29,16 @@ def _require_list(value: Any, field_name: str) -> list:
     return value
 
 
-def validate_card_data(data: dict[str, Any]) -> None:
+def _require_string_list(value: Any, field_name: str) -> list:
+    items = _require_list(value, field_name)
+    if any(not isinstance(item, str) for item in items):
+        raise ValidationError(f"{field_name} must contain only strings")
+    return items
+
+
+def validate_card_data(data: Any) -> None:
+    data = _require_mapping(data, "card")
+
     missing = sorted(REQUIRED_FIELDS.difference(data))
     if missing:
         raise ValidationError(f"missing required fields: {', '.join(missing)}")
@@ -43,7 +53,11 @@ def validate_card_data(data: dict[str, Any]) -> None:
         raise ValidationError(f"status must be one of: {', '.join(sorted(MEMORY_STATUSES))}")
 
     confidence = data["confidence"]
-    if not isinstance(confidence, int | float) or not 0.0 <= float(confidence) <= 1.0:
+    if (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, int | float)
+        or not 0.0 <= float(confidence) <= 1.0
+    ):
         raise ValidationError("confidence must be a number between 0.0 and 1.0")
 
     for field_name in ("id", "title", "summary", "content", "created_at", "updated_at"):
@@ -55,20 +69,20 @@ def validate_card_data(data: dict[str, Any]) -> None:
         raise ValidationError(f"source.kind must be one of: {', '.join(sorted(SOURCE_KINDS))}")
     if not isinstance(source.get("description"), str) or not source["description"].strip():
         raise ValidationError("source.description must be a non-empty string")
-    _require_list(source.get("files", []), "source.files")
-    _require_list(source.get("commits", []), "source.commits")
+    _require_string_list(source.get("files", []), "source.files")
+    _require_string_list(source.get("commits", []), "source.commits")
 
     scope = _require_mapping(data["scope"], "scope")
     if not isinstance(scope.get("project"), str):
         raise ValidationError("scope.project must be a string")
-    _require_list(scope.get("modules", []), "scope.modules")
-    _require_list(scope.get("paths", []), "scope.paths")
+    _require_string_list(scope.get("modules", []), "scope.modules")
+    _require_string_list(scope.get("paths", []), "scope.paths")
 
-    _require_list(data["tags"], "tags")
+    _require_string_list(data["tags"], "tags")
 
     relations = _require_mapping(data["relations"], "relations")
     for relation in RELATION_KINDS:
-        _require_list(relations.get(relation, []), f"relations.{relation}")
+        _require_string_list(relations.get(relation, []), f"relations.{relation}")
 
 
 @dataclass(frozen=True)
@@ -78,7 +92,7 @@ class MemoryCard:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MemoryCard":
         validate_card_data(data)
-        return cls(data=dict(data))
+        return cls(data=deepcopy(data))
 
     @property
     def id(self) -> str:
@@ -97,4 +111,4 @@ class MemoryCard:
         return self.data["updated_at"]
 
     def to_dict(self) -> dict[str, Any]:
-        return dict(self.data)
+        return deepcopy(self.data)

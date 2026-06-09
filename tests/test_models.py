@@ -71,8 +71,54 @@ def test_validate_card_data_rejects_out_of_range_confidence():
     assert "confidence" in str(error.value)
 
 
+@pytest.mark.parametrize("confidence", [True, False])
+def test_validate_card_data_rejects_bool_confidence(confidence):
+    data = valid_card_data()
+    data["confidence"] = confidence
+
+    with pytest.raises(ValidationError) as error:
+        validate_card_data(data)
+
+    assert "confidence" in str(error.value)
+
+
+def test_validate_card_data_rejects_non_string_list_items():
+    data = valid_card_data()
+    data["relations"]["related_to"] = [None]
+
+    with pytest.raises(ValidationError) as error:
+        validate_card_data(data)
+
+    assert "relations.related_to" in str(error.value)
+
+
+def test_validate_card_data_rejects_non_mapping_card():
+    with pytest.raises(ValidationError) as error:
+        validate_card_data(None)
+
+    assert "card" in str(error.value)
+
+
 def test_memory_card_round_trips_to_dict():
     card = MemoryCard.from_dict(valid_card_data())
 
     assert card.id == "mem_20260609_001"
+    assert card.to_dict()["relations"]["supersedes"] == []
+
+
+def test_memory_card_does_not_share_nested_input_data():
+    data = valid_card_data()
+    card = MemoryCard.from_dict(data)
+
+    data["relations"]["supersedes"].append("mem_old")
+
+    assert card.to_dict()["relations"]["supersedes"] == []
+
+
+def test_memory_card_to_dict_returns_deep_copy():
+    card = MemoryCard.from_dict(valid_card_data())
+    data = card.to_dict()
+
+    data["relations"]["supersedes"].append("mem_old")
+
     assert card.to_dict()["relations"]["supersedes"] == []
