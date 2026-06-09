@@ -108,6 +108,11 @@ class MemoryService:
                     if target not in current:
                         current.append(target)
                 relations[relation] = current
+        self._validate_relation_items(
+            data["relations"],
+            source_id=memory_id,
+            allowed_target_ids=self._existing_card_ids(),
+        )
         data["updated_at"] = self._now()
         write_card(self.project_root, data, overwrite=True)
         card = MemoryCard.from_dict(data)

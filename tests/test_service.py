@@ -352,6 +352,21 @@ def test_update_memory_accepts_existing_relation_target(project_root: Path):
     ]
 
 
+def test_update_memory_rejects_existing_orphan_relation(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    source = service.remember(remember_input())
+    service.remember(remember_input())
+    corrupted = service.open_memory(source["id"])
+    corrupted["relations"]["related_to"] = ["mem_20990101_999"]
+    real_write_card(project_root, corrupted, overwrite=True)
+
+    with pytest.raises(ValueError, match="mem_20990101_999"):
+        service.update_memory(source["id"], {"status": "stale"})
+
+    assert service.open_memory(source["id"])["status"] == "active"
+
+
 def test_update_memory_rejects_unknown_update_key(project_root: Path):
     service = MemoryService(project_root)
     service.init_project()
