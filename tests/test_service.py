@@ -164,6 +164,26 @@ def test_remember_rejects_string_relation_targets(project_root: Path):
         service.remember(payload)
 
 
+def test_remember_rejects_non_mapping_source(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload["source"] = "bad"
+
+    with pytest.raises(ValueError, match="source"):
+        service.remember(payload)
+
+
+def test_remember_rejects_non_mapping_scope(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload["scope"] = []
+
+    with pytest.raises(ValueError, match="scope"):
+        service.remember(payload)
+
+
 def test_update_memory_rejects_unknown_relation_key(project_root: Path):
     service = MemoryService(project_root)
     service.init_project()
@@ -222,6 +242,23 @@ def test_remember_retries_id_collision(
     assert service.open_memory(result["id"])["title"] == "YAML storage"
 
 
+def test_remember_removes_yaml_when_index_upsert_fails(
+    project_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    service = MemoryService(project_root)
+    service.init_project()
+
+    def fail_upsert(_card):
+        raise RuntimeError("index unavailable")
+
+    monkeypatch.setattr(service.index, "upsert", fail_upsert)
+
+    with pytest.raises(RuntimeError, match="index unavailable"):
+        service.remember(remember_input())
+
+    assert list((project_root / ".project-memory" / "cards").glob("*.yaml")) == []
+
+
 def test_update_memory_rolls_back_yaml_when_index_upsert_fails(
     project_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -250,6 +287,18 @@ def test_remember_notification_includes_superseded_relation(project_root: Path):
 
     assert "mem_20260609_001" in result["notification"]
     assert "Supersedes" in result["notification"]
+
+
+def test_remember_notification_includes_superseded_by_relation(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload["relations"]["superseded_by"] = ["mem_20260609_999"]
+
+    result = service.remember(payload)
+
+    assert "mem_20260609_999" in result["notification"]
+    assert "Superseded by" in result["notification"]
 
 
 def test_remember_does_not_mutate_payload(project_root: Path):

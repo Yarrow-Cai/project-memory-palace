@@ -42,7 +42,16 @@ class MemoryService:
                 continue
 
             card = MemoryCard.from_dict(data)
-            self.index.upsert(card)
+            try:
+                self.index.upsert(card)
+            except Exception as error:
+                try:
+                    path.unlink()
+                except OSError as cleanup_error:
+                    error.add_note(
+                        f"failed to remove written memory card {path}: {cleanup_error}"
+                    )
+                raise
             return {
                 "id": card.id,
                 "path": str(path),
@@ -105,7 +114,7 @@ class MemoryService:
     def _build_card(
         self, card_id: str, payload: dict[str, Any], now: str
     ) -> dict[str, Any]:
-        source = deepcopy(payload.get("source"))
+        source = self._source_from_payload(payload)
         confidence = self._validate_confidence(payload.get("confidence", 0.5))
         if not source:
             source = {
@@ -118,7 +127,7 @@ class MemoryService:
         source.setdefault("files", [])
         source.setdefault("commits", [])
 
-        scope = deepcopy(payload.get("scope")) or {}
+        scope = self._scope_from_payload(payload)
         scope.setdefault("project", "")
         scope.setdefault("modules", [])
         scope.setdefault("paths", [])
@@ -146,6 +155,22 @@ class MemoryService:
             "created_at": now,
             "updated_at": now,
         }
+
+    def _source_from_payload(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        source = payload.get("source")
+        if source is None:
+            return None
+        if not isinstance(source, Mapping):
+            raise ValueError("source must be a mapping")
+        return dict(deepcopy(source))
+
+    def _scope_from_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        scope = payload.get("scope")
+        if scope is None:
+            return {}
+        if not isinstance(scope, Mapping):
+            raise ValueError("scope must be a mapping")
+        return dict(deepcopy(scope))
 
     def _validate_confidence(self, value: Any) -> float:
         if isinstance(value, bool) or not isinstance(value, int | float):
