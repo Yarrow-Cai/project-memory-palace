@@ -113,6 +113,37 @@ def test_remember_rejects_string_confidence(project_root: Path):
         service.remember(payload)
 
 
+def test_remember_rejects_confidence_above_one(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload["confidence"] = 2.0
+
+    with pytest.raises(ValueError, match="confidence"):
+        service.remember(payload)
+
+
+def test_remember_rejects_confidence_below_zero(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload["confidence"] = -0.1
+
+    with pytest.raises(ValueError, match="confidence"):
+        service.remember(payload)
+
+
+def test_remember_rejects_out_of_range_confidence_without_source(project_root: Path):
+    service = MemoryService(project_root)
+    service.init_project()
+    payload = remember_input()
+    payload.pop("source")
+    payload["confidence"] = 2.0
+
+    with pytest.raises(ValueError, match="confidence"):
+        service.remember(payload)
+
+
 def test_remember_rejects_string_tags(project_root: Path):
     service = MemoryService(project_root)
     service.init_project()

@@ -150,7 +150,10 @@ class MemoryService:
     def _validate_confidence(self, value: Any) -> float:
         if isinstance(value, bool) or not isinstance(value, int | float):
             raise ValueError("confidence must be an int or float")
-        return float(value)
+        confidence = float(value)
+        if not 0.0 <= confidence <= 1.0:
+            raise ValueError("confidence must be between 0.0 and 1.0")
+        return confidence
 
     def _validate_string_list(self, value: Any, field_name: str) -> list[str]:
         if not isinstance(value, list) or any(
