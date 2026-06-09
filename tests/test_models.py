@@ -82,14 +82,32 @@ def test_validate_card_data_rejects_bool_confidence(confidence):
     assert "confidence" in str(error.value)
 
 
-def test_validate_card_data_rejects_non_string_list_items():
+@pytest.mark.parametrize(
+    ("field_path", "keys", "bad_value"),
+    [
+        ("source.files", ("source", "files"), 123),
+        ("source.commits", ("source", "commits"), None),
+        ("scope.modules", ("scope", "modules"), 123),
+        ("scope.paths", ("scope", "paths"), None),
+        ("tags", ("tags",), 123),
+        ("relations.supersedes", ("relations", "supersedes"), 123),
+        ("relations.superseded_by", ("relations", "superseded_by"), None),
+        ("relations.related_to", ("relations", "related_to"), 123),
+        ("relations.explains", ("relations", "explains"), None),
+        ("relations.caused_by", ("relations", "caused_by"), 123),
+    ],
+)
+def test_validate_card_data_rejects_non_string_list_items(field_path, keys, bad_value):
     data = valid_card_data()
-    data["relations"]["related_to"] = [None]
+    target = data
+    for key in keys[:-1]:
+        target = target[key]
+    target[keys[-1]] = [bad_value]
 
     with pytest.raises(ValidationError) as error:
         validate_card_data(data)
 
-    assert "relations.related_to" in str(error.value)
+    assert field_path in str(error.value)
 
 
 def test_validate_card_data_rejects_non_mapping_card():
