@@ -68,6 +68,13 @@ def test_mcp_tools_happy_path(project_root: Path):
     assert recent["results"][0]["id"] == created["id"]
 
 
+def test_mcp_update_memory_rejects_empty_updates(project_root: Path):
+    created = mcp_server.remember(str(project_root), memory_payload())
+
+    with pytest.raises(ValueError, match="updates"):
+        mcp_server.update_memory(str(project_root), created["id"], {})
+
+
 @pytest.mark.parametrize(
     ("tool", "args"),
     [

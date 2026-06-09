@@ -113,6 +113,21 @@ def test_update_memory_changes_status(project_root: Path):
     assert service.list_recent(1)[0]["status"] == "stale"
 
 
+def test_update_memory_rejects_empty_updates_before_open(
+    project_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = MemoryService(project_root)
+
+    def fail_open(_memory_id: str):
+        raise AssertionError("open_memory should not be called")
+
+    monkeypatch.setattr(service, "open_memory", fail_open)
+
+    with pytest.raises(ValueError, match="updates"):
+        service.update_memory("mem_20990101_999", {})
+
+
 @pytest.mark.parametrize("confidence", [True, False])
 def test_remember_rejects_bool_confidence(project_root: Path, confidence: bool):
     service = MemoryService(project_root)

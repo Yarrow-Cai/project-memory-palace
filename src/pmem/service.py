@@ -89,8 +89,8 @@ class MemoryService:
         return self.index.recent(limit)
 
     def update_memory(self, memory_id: str, updates: dict[str, Any]) -> dict[str, Any]:
-        existing = self.open_memory(memory_id)
         self._validate_update_keys(updates)
+        existing = self.open_memory(memory_id)
         data = deepcopy(existing)
         if "status" in updates:
             data["status"] = updates["status"]
@@ -183,6 +183,8 @@ class MemoryService:
             raise ValueError(f"missing required fields: {', '.join(missing)}")
 
     def _validate_update_keys(self, updates: dict[str, Any]) -> None:
+        if not updates:
+            raise ValueError("updates must not be empty")
         unknown_keys = sorted(set(updates).difference(UPDATE_ALLOWED_FIELDS))
         if unknown_keys:
             raise ValueError(f"unknown update key: {unknown_keys[0]}")
