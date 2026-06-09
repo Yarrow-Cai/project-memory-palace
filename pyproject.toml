@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-memory-palace"
+version = "0.1.0"
+description = "Local YAML-backed project memory with SQLite search, CLI, and MCP tools."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML>=6.0.2",
+  "mcp>=1.12.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0"
+]
+
+[project.scripts]
+pmem = "pmem.cli:main"
+pmem-mcp = "pmem.mcp_server:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
