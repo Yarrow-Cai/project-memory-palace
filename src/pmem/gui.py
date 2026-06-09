@@ -53,7 +53,7 @@ STATUS_ICONS = {
     "rejected": "\u2717",
 }
 
-# ── Theme colour tables for non-CTk widgets ────────────────────
+# 鈹€鈹€ Theme colour tables for non-CTk widgets 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 DARK_COLORS = {
     "tree_bg": "#2b2b2b",
@@ -123,7 +123,7 @@ class MemoryPalaceApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(150, self._load_recent)
 
-    # ── project init ────────────────────────────────────────────
+    # 鈹€鈹€ project init 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _init_project(self) -> None:
         try:
@@ -131,7 +131,7 @@ class MemoryPalaceApp:
         except Exception:
             pass
 
-    # ── theme helpers ───────────────────────────────────────────
+    # 鈹€鈹€ theme helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _apply_treeview_style(self) -> None:
         style = ttk.Style()
@@ -191,7 +191,7 @@ class MemoryPalaceApp:
         icon = "\u2600" if self._current_appearance == "dark" else "\ud83c\udf19"
         self.theme_btn.configure(text=icon)
 
-    # ── language ────────────────────────────────────────────────
+    # 鈹€鈹€ language 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _toggle_language(self) -> None:
         current = get_language()
@@ -214,7 +214,7 @@ class MemoryPalaceApp:
             self.detail_title_label.configure(text=_t("select_memory"))
         self._update_mcp_ui()
 
-    # ── MCP server ──────────────────────────────────────────────
+    # 鈹€鈹€ MCP server 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     @property
     def _mcp_available(self) -> bool:
@@ -260,15 +260,15 @@ class MemoryPalaceApp:
             return
 
         if self._mcp_running:
-            self.mcp_indicator.configure(text="\U0001f7e2", text_color=None)
-            self.mcp_label.configure(text=_t("mcp_running"), text_color=None)
+            self.mcp_indicator.configure(text="\U0001f7e2")
+            self.mcp_label.configure(text=_t("mcp_running"))
             self.mcp_btn.configure(text=_t("mcp_stop"))
         else:
-            self.mcp_indicator.configure(text="\U0001f534", text_color=None)
-            self.mcp_label.configure(text=_t("mcp_stopped"), text_color=None)
+            self.mcp_indicator.configure(text="\U0001f534")
+            self.mcp_label.configure(text=_t("mcp_stopped"))
             self.mcp_btn.configure(text=_t("mcp_start"))
 
-    # ── UI construction ─────────────────────────────────────────
+    # 鈹€鈹€ UI construction 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _build_ui(self) -> None:
         self._apply_treeview_style()
@@ -480,7 +480,7 @@ class MemoryPalaceApp:
                                      text_color=("gray50", "gray60"))
         version_label.pack(side=tk.RIGHT, padx=(0, 12))
 
-    # ── system tray ─────────────────────────────────────────────
+    # 鈹€鈹€ system tray 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _setup_tray(self) -> None:
         if not _HAS_TRAY:
@@ -527,7 +527,7 @@ class MemoryPalaceApp:
         self._stop_tray()
         self.root.destroy()
 
-    # ── project browsing ────────────────────────────────────────
+    # 鈹€鈹€ project browsing 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _browse_project(self) -> None:
         from tkinter import filedialog
@@ -567,7 +567,7 @@ class MemoryPalaceApp:
         self._clear_detail()
         self._load_recent()
 
-    # ── data loading ────────────────────────────────────────────
+    # 鈹€鈹€ data loading 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _load_recent(self) -> None:
         self._set_status(_t("loading"))
@@ -617,7 +617,7 @@ class MemoryPalaceApp:
         self._set_status(_t("rebuilt"))
         self._refresh()
 
-    # ── tree population ─────────────────────────────────────────
+    # 鈹€鈹€ tree population 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _populate_tree(self, tree: ttk.Treeview,
                        rows: list[dict[str, Any]]) -> None:
@@ -676,7 +676,7 @@ class MemoryPalaceApp:
         except Exception as exc:
             messagebox.showerror(f"{_t('error')}", str(exc))
 
-    # ── detail rendering ────────────────────────────────────────
+    # 鈹€鈹€ detail rendering 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _show_detail(self, memory_id: str) -> None:
         self._selected_id = memory_id
@@ -778,12 +778,12 @@ class MemoryPalaceApp:
         self.detail_text.delete("1.0", tk.END)
         self.detail_text.configure(state=tk.DISABLED)
 
-    # ── helpers ─────────────────────────────────────────────────
+    # 鈹€鈹€ helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _set_status(self, text: str) -> None:
         self.status_label.configure(text=text)
 
-    # ── run ─────────────────────────────────────────────────────
+    # 鈹€鈹€ run 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def run(self) -> None:
         self._start_tray()
