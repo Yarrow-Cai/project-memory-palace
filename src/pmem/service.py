@@ -73,6 +73,7 @@ class MemoryService:
     def recall(
         self, query: str, filters: dict[str, Any] | None, limit: int = 5
     ) -> list[dict[str, Any]]:
+        self._validate_limit(limit)
         self.init_project()
         return self.index.search(query, filters or {}, limit)
 
@@ -83,6 +84,7 @@ class MemoryService:
         raise MemoryNotFoundError(f"memory not found: {memory_id}")
 
     def list_recent(self, limit: int = 10) -> list[dict[str, Any]]:
+        self._validate_limit(limit)
         self.init_project()
         return self.index.recent(limit)
 
@@ -220,6 +222,10 @@ class MemoryService:
         if not 0.0 <= confidence <= 1.0:
             raise ValueError("confidence must be between 0.0 and 1.0")
         return confidence
+
+    def _validate_limit(self, limit: Any) -> None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
 
     def _validate_string_list(self, value: Any, field_name: str) -> list[str]:
         if not isinstance(value, list) or any(

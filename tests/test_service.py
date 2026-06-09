@@ -81,6 +81,24 @@ def test_recall_returns_summary_without_content(project_root: Path):
     assert "content" not in results[0]
 
 
+@pytest.mark.parametrize("limit", [0, -1])
+def test_recall_rejects_non_positive_limit(project_root: Path, limit: int):
+    service = MemoryService(project_root)
+    service.init_project()
+
+    with pytest.raises(ValueError, match="limit"):
+        service.recall("YAML", {}, limit)
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_list_recent_rejects_non_positive_limit(project_root: Path, limit: int):
+    service = MemoryService(project_root)
+    service.init_project()
+
+    with pytest.raises(ValueError, match="limit"):
+        service.list_recent(limit)
+
+
 def test_update_memory_changes_status(project_root: Path):
     service = MemoryService(project_root)
     service.init_project()
