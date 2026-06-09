@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,9 @@ from pmem.constants import RELATION_KINDS
 from pmem.index import MemoryIndex
 from pmem.models import MemoryCard
 from pmem.yaml_io import discover_cards, ensure_project_memory, next_card_identity, write_card
+
+
+REMEMBER_ID_WRITE_ATTEMPTS = 3
 
 
 class MemoryNotFoundError(KeyError):
@@ -27,16 +31,27 @@ class MemoryService:
     def remember(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.init_project()
         now = self._now()
-        card_id, _sequence = next_card_identity(self.project_root, now[:10])
-        data = self._build_card(card_id, payload, now)
-        path = write_card(self.project_root, data)
-        card = MemoryCard.from_dict(data)
-        self.index.upsert(card)
-        return {
-            "id": card.id,
-            "path": str(path),
-            "notification": self._notification(card),
-        }
+        last_error: FileExistsError | None = None
+        for _attempt in range(REMEMBER_ID_WRITE_ATTEMPTS):
+            card_id, _sequence = next_card_identity(self.project_root, now[:10])
+            data = self._build_card(card_id, payload, now)
+            try:
+                path = write_card(self.project_root, data)
+            except FileExistsError as error:
+                last_error = error
+                continue
+
+            card = MemoryCard.from_dict(data)
+            self.index.upsert(card)
+            return {
+                "id": card.id,
+                "path": str(path),
+                "notification": self._notification(card),
+            }
+
+        raise RuntimeError(
+            f"failed to allocate unique memory id after {REMEMBER_ID_WRITE_ATTEMPTS} attempts"
+        ) from last_error
 
     def recall(
         self, query: str, filters: dict[str, Any] | None, limit: int = 5
@@ -55,18 +70,19 @@ class MemoryService:
         return self.index.recent(limit)
 
     def update_memory(self, memory_id: str, updates: dict[str, Any]) -> dict[str, Any]:
-        data = deepcopy(self.open_memory(memory_id))
+        existing = self.open_memory(memory_id)
+        data = deepcopy(existing)
         if "status" in updates:
             data["status"] = updates["status"]
         if "confidence" in updates:
-            data["confidence"] = updates["confidence"]
+            data["confidence"] = self._validate_confidence(updates["confidence"])
         if "tags" in updates:
-            data["tags"] = updates["tags"]
+            data["tags"] = self._validate_string_list(updates["tags"], "tags")
         if "relations" in updates:
             relations = data.setdefault("relations", self._empty_relations())
-            for relation, targets in updates["relations"].items():
-                if relation not in RELATION_KINDS:
-                    continue
+            for relation, targets in self._validate_relation_items(
+                updates["relations"]
+            ).items():
                 current = list(relations.get(relation, []))
                 for target in targets:
                     if target not in current:
@@ -75,7 +91,11 @@ class MemoryService:
         data["updated_at"] = self._now()
         write_card(self.project_root, data, overwrite=True)
         card = MemoryCard.from_dict(data)
-        self.index.upsert(card)
+        try:
+            self.index.upsert(card)
+        except Exception:
+            write_card(self.project_root, existing, overwrite=True)
+            raise
         return card.to_dict()
 
     def rebuild_index(self) -> None:
@@ -86,7 +106,7 @@ class MemoryService:
         self, card_id: str, payload: dict[str, Any], now: str
     ) -> dict[str, Any]:
         source = deepcopy(payload.get("source"))
-        confidence = float(payload.get("confidence", 0.5))
+        confidence = self._validate_confidence(payload.get("confidence", 0.5))
         if not source:
             source = {
                 "kind": "analysis",
@@ -104,9 +124,11 @@ class MemoryService:
         scope.setdefault("paths", [])
 
         relations = self._empty_relations()
-        for relation, targets in (payload.get("relations") or {}).items():
-            if relation in relations:
-                relations[relation] = list(targets)
+        if payload.get("relations") is not None:
+            for relation, targets in self._validate_relation_items(
+                payload["relations"]
+            ).items():
+                relations[relation] = targets
 
         return {
             "schema_version": 1,
@@ -119,11 +141,36 @@ class MemoryService:
             "content": payload["content"],
             "source": source,
             "scope": scope,
-            "tags": list(payload.get("tags", [])),
+            "tags": self._validate_string_list(payload.get("tags", []), "tags"),
             "relations": relations,
             "created_at": now,
             "updated_at": now,
         }
+
+    def _validate_confidence(self, value: Any) -> float:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError("confidence must be an int or float")
+        return float(value)
+
+    def _validate_string_list(self, value: Any, field_name: str) -> list[str]:
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) for item in value
+        ):
+            raise ValueError(f"{field_name} must be a list of strings")
+        return list(value)
+
+    def _validate_relation_items(self, value: Any) -> dict[str, list[str]]:
+        if not isinstance(value, Mapping):
+            raise ValueError("relations must be a mapping")
+
+        relations: dict[str, list[str]] = {}
+        for relation, targets in value.items():
+            if relation not in RELATION_KINDS:
+                raise ValueError(f"unknown relation: {relation}")
+            relations[relation] = self._validate_string_list(
+                targets, f"relations.{relation}"
+            )
+        return relations
 
     def _empty_relations(self) -> dict[str, list[str]]:
         return {relation: [] for relation in RELATION_KINDS}
@@ -133,11 +180,20 @@ class MemoryService:
 
     def _notification(self, card: MemoryCard) -> str:
         data = card.to_dict()
-        return (
-            "Project memory written:\n"
-            f"- ID: {data['id']}\n"
-            f"- Type: {data['type']}\n"
-            f"- Summary: {data['summary']}\n"
-            f"- Source: {data['source']['kind']} - {data['source']['description']}\n"
+        lines = [
+            "Project memory written:",
+            f"- ID: {data['id']}",
+            f"- Type: {data['type']}",
+            f"- Summary: {data['summary']}",
+            f"- Source: {data['source']['kind']} - {data['source']['description']}",
+        ]
+        supersedes = data["relations"].get("supersedes", [])
+        superseded_by = data["relations"].get("superseded_by", [])
+        if supersedes:
+            lines.append(f"- Supersedes: {', '.join(supersedes)}")
+        if superseded_by:
+            lines.append(f"- Superseded by: {', '.join(superseded_by)}")
+        lines.append(
             "- Future use: use recall to retrieve this summary, then open_memory for details."
         )
+        return "\n".join(lines)
