@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 type SSESession struct {
@@ -145,13 +147,23 @@ func (s *SSEServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "project-memory-palace", "version": "0.3.0"},
 		})
-	default:
-		result, err := s.Registry.Dispatch(req.Method, req.Params)
+	case "tools/call":
+		name, _ := req.Params["name"].(string)
+		args, _ := req.Params["arguments"].(map[string]any)
+		if args == nil {
+			args = map[string]any{}
+		}
+		result, err := s.Registry.Dispatch(name, args)
 		if err != nil {
-			resp = NewErrorResponse(req.ID, -32601, err.Error())
+			resp = NewErrorResponse(req.ID, -32603, err.Error())
 		} else {
 			resp = NewResponse(req.ID, result)
 		}
+	case "notifications/initialized":
+		w.WriteHeader(http.StatusAccepted)
+		return
+	default:
+		resp = NewErrorResponse(req.ID, -32601, fmt.Sprintf("unknown method: %s", req.Method))
 	}
 
 	s.sendEvent(session, resp)
@@ -159,11 +171,18 @@ func (s *SSEServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *SSEServer) sendEvent(session *SSESession, resp Response) {
-	data, _ := json.Marshal(resp)
+	data, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("mcp: marshal response: %v", err)
+		return
+	}
 	msg := fmt.Sprintf("event: message\ndata: %s\n\n", string(data))
+	timer := time.NewTimer(5 * time.Second)
 	select {
 	case session.events <- msg:
-	default:
+		timer.Stop()
+	case <-timer.C:
+		log.Printf("mcp: session %s event channel full, dropping response", session.id)
 	}
 }
 
