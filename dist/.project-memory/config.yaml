@@ -1,0 +1,6 @@
+schema_version: 1
+project_name: ""
+default_recall_limit: 5
+search:
+  use_embeddings: false
+  include_rejected_by_default: false
