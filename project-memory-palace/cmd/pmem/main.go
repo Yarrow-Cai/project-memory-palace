@@ -11,6 +11,7 @@ import (
 	"github.com/atop/project-memory-palace/internal/service"
 	"github.com/atop/project-memory-palace/internal/tray"
 	"gopkg.in/yaml.v3"
+	"github.com/atop/project-memory-palace/internal/mcp"
 )
 
 var projectRoot string
@@ -54,6 +55,8 @@ func run() int {
 		return cmdUpdate(cmdArgs)
 	case "rebuild-index":
 		return cmdRebuildIndex(cmdArgs)
+	case "serve-mcp":
+		return cmdServeMCP(cmdArgs)
 	case "synthesize-rules":
 		return cmdSynthesizeRules(cmdArgs)
 	case "audit":
@@ -193,4 +196,85 @@ func cmdSynthesizeRules(args []string) int {
 	if err := svc.SynthesizeRules(); err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
 	fmt.Printf("rules-synthesized: true\nproject-root: %s\n", projectRoot)
 	return 0
+}
+
+func cmdServeMCP(args []string) int {
+	projectRoot = "."
+	if len(args) > 0 { projectRoot = args[0] }
+	svc, err := newService()
+	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+	svc.InitProject()
+
+	reg := mcp.NewToolRegistry()
+	reg.Register("remember", "Write one durable project memory card.", map[string]any{
+		"type": "object",
+		"properties": map[string]any{"memory": map[string]any{"type": "object"}},
+	}, func(params map[string]any) (any, error) {
+		mem, ok := params["memory"].(map[string]any)
+		if !ok { return nil, fmt.Errorf("memory parameter required") }
+		return svc.Remember(mem)
+	})
+	reg.Register("recall", "Retrieve relevant memory summaries.", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{"type": "string"},
+			"filters": map[string]any{"type": "object"},
+			"limit": map[string]any{"type": "integer"},
+		},
+	}, func(params map[string]any) (any, error) {
+		query := ""
+		if v, ok := params["query"].(string); ok { query = v }
+		filters, _ := params["filters"].(map[string]any)
+		limit := 5
+		if v, ok := params["limit"].(float64); ok { limit = int(v) }
+		results, err := svc.Recall(query, filters, limit)
+		if err != nil { return nil, err }
+		return map[string]any{"results": results}, nil
+	})
+	reg.Register("open_memory", "Open one full memory card by ID.", map[string]any{
+		"type": "object",
+		"properties": map[string]any{"id": map[string]any{"type": "string"}},
+	}, func(params map[string]any) (any, error) {
+		id := ""
+		if v, ok := params["id"].(string); ok { id = v }
+		return svc.OpenMemory(id)
+	})
+	reg.Register("update_memory", "Update an existing memory card.", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id": map[string]any{"type": "string"},
+			"updates": map[string]any{"type": "object"},
+		},
+	}, func(params map[string]any) (any, error) {
+		id := ""
+		if v, ok := params["id"].(string); ok { id = v }
+		updates, ok := params["updates"].(map[string]any)
+		if !ok { return nil, fmt.Errorf("updates parameter required") }
+		return svc.UpdateMemory(id, updates)
+	})
+	reg.Register("list_recent", "List recently created or updated memories.", map[string]any{
+		"type": "object",
+		"properties": map[string]any{"limit": map[string]any{"type": "integer"}},
+	}, func(params map[string]any) (any, error) {
+		limit := 10
+		if v, ok := params["limit"].(float64); ok { limit = int(v) }
+		results, err := svc.ListRecent(limit)
+		if err != nil { return nil, err }
+		return map[string]any{"results": results}, nil
+	})
+	reg.Register("synthesize_rules", "Regenerate agent-rules.yaml from active cards.", map[string]any{
+		"type": "object", "properties": map[string]any{},
+	}, func(params map[string]any) (any, error) {
+		if err := svc.SynthesizeRules(); err != nil { return nil, err }
+		return map[string]any{"status": "ok"}, nil
+	})
+
+	srv := &mcp.StdioServer{Registry: reg, Reader: os.Stdin, Writer: os.Stdout}
+	for {
+		if err := srv.HandleOne(); err != nil {
+			if err.Error() == "EOF" { return 0 }
+			fmt.Fprintf(os.Stderr, "mcp error: %v\n", err)
+			return 1
+		}
+	}
 }

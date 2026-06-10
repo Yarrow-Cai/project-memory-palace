@@ -215,12 +215,13 @@ func (s *SSEServer) sendEvent(session *SSESession, resp Response) {
 	}
 }
 
+
 func BuildMCPConfig(exePath string, projectRoot string) string {
 	cfg := map[string]any{
 		"mcpServers": map[string]any{
 			"project-memory-palace": map[string]any{
-				"transport": "sse",
-				"url":       "http://127.0.0.1:8147/sse",
+				"command": exePath,
+				"args":    []string{"serve-mcp", projectRoot},
 			},
 		},
 	}

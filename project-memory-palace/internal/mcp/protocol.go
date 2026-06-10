@@ -9,22 +9,22 @@ import (
 )
 
 type Request struct {
-	JSONRPC string         `json:"jsonrpc"`
-	ID      json.Number    `json:"id"`
-	Method  string         `json:"method"`
-	Params  map[string]any `json:"params"`
+	JSONRPC string         ` + json:"jsonrpc" + `
+	ID      json.Number    ` + json:"id" + `
+	Method  string         ` + json:"method" + `
+	Params  map[string]any ` + json:"params" + `
 }
 
 type Response struct {
-	JSONRPC string         `json:"jsonrpc"`
-	ID      json.Number    `json:"id"`
-	Result  any            `json:"result,omitempty"`
-	Error   *ResponseError `json:"error,omitempty"`
+	JSONRPC string         ` + json:"jsonrpc" + `
+	ID      json.Number    ` + json:"id" + `
+	Result  any            ` + json:"result,omitempty" + `
+	Error   *ResponseError ` + json:"error,omitempty" + `
 }
 
 type ResponseError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int    ` + json:"code" + `
+	Message string ` + json:"message" + `
 }
 
 func ParseRequest(raw []byte) (*Request, error) {
@@ -94,17 +94,40 @@ func (s *StdioServer) HandleOne() error {
 	}
 	req, err := ParseRequest(scanner.Bytes())
 	if err != nil { return s.writeResponse(NewErrorResponse("0", -32700, "Parse error")) }
+
+	// Handle notifications (no id)
+	if req.ID.String() == "" {
+		switch req.Method {
+		case "notifications/initialized":
+			return nil // ack silently
+		}
+		return nil
+	}
+
 	var resp Response
-	if req.Method == "list_tools" {
+	switch req.Method {
+	case "initialize":
+		resp = NewResponse(req.ID, map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"serverInfo":      map[string]any{"name": "project-memory-palace", "version": "0.4.0"},
+		})
+	case "tools/list":
 		resp = NewResponse(req.ID, map[string]any{"tools": s.Registry.List()})
-	} else {
-		result, err := s.Registry.Dispatch(req.Method, req.Params)
+	case "tools/call":
+		name, _ := req.Params["name"].(string)
+		args, _ := req.Params["arguments"].(map[string]any)
+		if args == nil { args = map[string]any{} }
+		result, err := s.Registry.Dispatch(name, args)
 		if err != nil {
-			resp = NewErrorResponse(req.ID, -32601, err.Error())
+			resp = NewErrorResponse(req.ID, -32603, err.Error())
 		} else {
 			resp = NewResponse(req.ID, result)
 		}
+	default:
+		resp = NewErrorResponse(req.ID, -32601, fmt.Sprintf("unknown method: %s", req.Method))
 	}
+
 	return s.writeResponse(resp)
 }
 
