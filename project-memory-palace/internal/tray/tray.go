@@ -19,6 +19,7 @@ import (
 	"github.com/atop/project-memory-palace/internal/service"
 	"github.com/getlantern/systray"
 	_ "embed"
+	"log"
 )
 
 //go:embed templates/index.html
@@ -124,7 +125,7 @@ func onReady() {
 		for {
 			select {
 			case <-mShow.ClickedCh:
-				exec.Command("cmd", "/c", "start", "http://localhost:8147").Start()
+				exec.Command("cmd", "/c", "start", "http://localhost127.0.0.1:8147").Start()
 			case <-mCopyMCP.ClickedCh:
 				copyMCPConfig()
 			case <-mMCPToggle.ClickedCh:
@@ -177,6 +178,7 @@ func startAPI() {
 
 	http.HandleFunc("/", serveIndex)
 	http.HandleFunc("/sse", sseServer.HandleSSE)
+	http.HandleFunc("/api/health", handleHealth)
 	http.HandleFunc("/message", sseServer.HandleMessage)
 	http.HandleFunc("/api/recent", handleRecent)
 	http.HandleFunc("/api/search", handleSearch)
@@ -185,8 +187,10 @@ func startAPI() {
 	http.HandleFunc("/api/project", handleProject)
 	http.HandleFunc("/api/project/set", handleProjectSet)
 	http.HandleFunc("/api/projects/recent", handleRecents)
-	fmt.Fprintln(os.Stderr, "API + SSE server started on :8147")
-	http.ListenAndServe(":8147", nil)
+	fmt.Fprintln(os.Stderr, "API + SSE server started on 127.0.0.1:8147")
+	if err := http.ListenAndServe("127.0.0.1:8147", nil); err != nil {
+		log.Printf("HTTP server error: %v", err)
+	}
 }
 
 
@@ -352,3 +356,8 @@ func writeJSONRaw(w http.ResponseWriter, data map[string]any, err error) {
 	json.NewEncoder(w).Encode(data)
 }
 
+
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+}

@@ -14,10 +14,10 @@ import (
 )
 
 type SSESession struct {
-	id        string
-	events    chan string
-	done      chan struct{}
-	closed    bool
+	id     string
+	events chan string
+	done   chan struct{}
+	closed bool
 }
 
 type SSEServer struct {
@@ -91,8 +91,9 @@ func (s *SSEServer) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	flusher.Flush()
 
-	_, err := fmt.Fprintf(w, "event: endpoint\r\ndata: /message?sessionId=%s\r\n\r\n", session.id)
-	if err != nil {
+	// Send absolute URL so clients don't need to resolve relative paths
+	msgURL := fmt.Sprintf("http://127.0.0.1:8147/message?sessionId=%s", session.id)
+	if _, err := fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", msgURL); err != nil {
 		log.Printf("mcp: write endpoint event: %v", err)
 		return
 	}
@@ -158,8 +159,6 @@ func (s *SSEServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	log.Printf("mcp: session %s received: %s", session.id, string(body))
-
 	req, err := ParseRequest(body)
 	if err != nil {
 		s.sendEvent(session, NewErrorResponse("0", -32700, "Parse error"))
@@ -206,7 +205,7 @@ func (s *SSEServer) sendEvent(session *SSESession, resp Response) {
 		log.Printf("mcp: marshal response: %v", err)
 		return
 	}
-	msg := fmt.Sprintf("event: message\r\ndata: %s\r\n\r\n", string(data))
+	msg := fmt.Sprintf("event: message\ndata: %s\n\n", string(data))
 	timer := time.NewTimer(5 * time.Second)
 	select {
 	case session.events <- msg:
@@ -221,7 +220,7 @@ func BuildMCPConfig(exePath string, projectRoot string) string {
 		"mcpServers": map[string]any{
 			"project-memory-palace": map[string]any{
 				"transport": "sse",
-				"url":       "http://localhost:8147/sse",
+				"url":       "http://127.0.0.1:8147/sse",
 			},
 		},
 	}
