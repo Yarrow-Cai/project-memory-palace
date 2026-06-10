@@ -54,6 +54,8 @@ func run() int {
 		return cmdUpdate(cmdArgs)
 	case "rebuild-index":
 		return cmdRebuildIndex(cmdArgs)
+	case "synthesize-rules":
+		return cmdSynthesizeRules(cmdArgs)
 	case "audit":
 		return cmdAudit(cmdArgs)
 	default:
@@ -181,4 +183,14 @@ func hideConsole() {
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	freeConsole := kernel32.NewProc("FreeConsole")
 	freeConsole.Call()
+}
+
+func cmdSynthesizeRules(args []string) int {
+	fs := flag.NewFlagSet("synthesize-rules", flag.ContinueOnError)
+	_ = fs.Parse(args)
+	svc, err := newService()
+	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+	if err := svc.SynthesizeRules(); err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+	fmt.Printf("rules-synthesized: true\nproject-root: %s\n", projectRoot)
+	return 0
 }

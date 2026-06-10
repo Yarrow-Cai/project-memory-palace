@@ -14,9 +14,10 @@ import (
 )
 
 type SSESession struct {
-	id     string
-	events chan string
-	done   chan struct{}
+	id        string
+	events    chan string
+	done      chan struct{}
+	closed    bool
 }
 
 type SSEServer struct {
@@ -53,10 +54,13 @@ func (s *SSEServer) addSession() *SSESession {
 func (s *SSEServer) removeSession(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if ses, ok := s.sessions[id]; ok {
-		close(ses.done)
-		delete(s.sessions, id)
+	ses, ok := s.sessions[id]
+	if !ok || ses.closed {
+		return
 	}
+	ses.closed = true
+	close(ses.done)
+	delete(s.sessions, id)
 }
 
 func (s *SSEServer) getSession(id string) *SSESession {
@@ -66,6 +70,12 @@ func (s *SSEServer) getSession(id string) *SSESession {
 }
 
 func (s *SSEServer) HandleSSE(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rc := recover(); rc != nil {
+			log.Printf("mcp: panic in HandleSSE: %v", rc)
+		}
+	}()
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
@@ -81,23 +91,39 @@ func (s *SSEServer) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	flusher.Flush()
 
-	fmt.Fprintf(w, "event: endpoint\ndata: /message?sessionId=%s\n\n", session.id)
+	_, err := fmt.Fprintf(w, "event: endpoint\r\ndata: /message?sessionId=%s\r\n\r\n", session.id)
+	if err != nil {
+		log.Printf("mcp: write endpoint event: %v", err)
+		return
+	}
 	flusher.Flush()
+	log.Printf("mcp: session %s started", session.id)
 
 	for {
 		select {
 		case evt := <-session.events:
-			fmt.Fprint(w, evt)
+			if _, err := fmt.Fprint(w, evt); err != nil {
+				log.Printf("mcp: session %s write event: %v", session.id, err)
+				return
+			}
 			flusher.Flush()
 		case <-r.Context().Done():
+			log.Printf("mcp: session %s client disconnected", session.id)
 			return
 		case <-session.done:
+			log.Printf("mcp: session %s closed", session.id)
 			return
 		}
 	}
 }
 
 func (s *SSEServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rc := recover(); rc != nil {
+			log.Printf("mcp: panic in HandleMessage: %v", rc)
+		}
+	}()
+
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -119,16 +145,20 @@ func (s *SSEServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 
 	session := s.getSession(sessionID)
 	if session == nil {
+		log.Printf("mcp: message for unknown session %s", sessionID)
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		log.Printf("mcp: session %s read body: %v", session.id, err)
 		http.Error(w, "read error", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
+
+	log.Printf("mcp: session %s received: %s", session.id, string(body))
 
 	req, err := ParseRequest(body)
 	if err != nil {
@@ -176,7 +206,7 @@ func (s *SSEServer) sendEvent(session *SSESession, resp Response) {
 		log.Printf("mcp: marshal response: %v", err)
 		return
 	}
-	msg := fmt.Sprintf("event: message\ndata: %s\n\n", string(data))
+	msg := fmt.Sprintf("event: message\r\ndata: %s\r\n\r\n", string(data))
 	timer := time.NewTimer(5 * time.Second)
 	select {
 	case session.events <- msg:

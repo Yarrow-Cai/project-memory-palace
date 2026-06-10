@@ -189,6 +189,7 @@ func startAPI() {
 	http.ListenAndServe(":8147", nil)
 }
 
+
 func registerMCPTools(reg *mcp.ToolRegistry) {
 	reg.Register("remember", "Write one durable project memory card.", map[string]any{
 		"type": "object",
@@ -255,6 +256,15 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 		results, err := svc.ListRecent(limit)
 		if err != nil { return nil, err }
 		return map[string]any{"results": results}, nil
+	})
+
+	reg.Register("synthesize_rules", "Regenerate agent-rules.yaml from active convention and decision cards.", map[string]any{
+		"type": "object",
+		"properties": map[string]any{},
+	}, func(params map[string]any) (any, error) {
+		mu.Lock(); defer mu.Unlock()
+		if err := svc.SynthesizeRules(); err != nil { return nil, err }
+		return map[string]any{"rule_count": 0, "rules": []any{}}, nil
 	})
 }
 
@@ -341,3 +351,4 @@ func writeJSONRaw(w http.ResponseWriter, data map[string]any, err error) {
 	if err != nil { json.NewEncoder(w).Encode(map[string]any{"error": err.Error()}); return }
 	json.NewEncoder(w).Encode(data)
 }
+
