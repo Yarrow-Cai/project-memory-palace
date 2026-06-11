@@ -40,10 +40,10 @@ func TestToolDispatchUnknown(t *testing.T) {
 func TestStdioServer(t *testing.T) {
 	reg := NewToolRegistry()
 	reg.Register("ping", "", nil, func(p map[string]any) (any, error) { return "pong", nil })
-	in := bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}` + "\n")
+	in := bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ping","arguments":{}}}` + "\n")
 	out := &bytes.Buffer{}
 	srv := &StdioServer{Registry: reg, Reader: in, Writer: out}
-	srv.HandleOne()
+	srv.Serve()
 	var resp Response
 	json.Unmarshal(out.Bytes(), &resp)
 	if resp.Error != nil { t.Fatalf("unexpected error: %+v", resp.Error) }

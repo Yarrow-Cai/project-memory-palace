@@ -53,6 +53,19 @@ func (idx *MemoryIndex) connect() (*sql.DB, error) {
 	return idx.db, idx.dbErr
 }
 
+// Close closes the underlying SQLite database connection and resets the
+// sync.Once so a future connect() can reopen. Safe to call even if
+// connect() was never invoked.
+func (idx *MemoryIndex) Close() error {
+	if idx.db != nil {
+		err := idx.db.Close()
+		idx.db = nil
+		idx.dbOnce = sync.Once{}
+		return err
+	}
+	return nil
+}
+
 func (idx *MemoryIndex) Initialize() error {
 	db, err := idx.connect()
 	if err != nil { return err }

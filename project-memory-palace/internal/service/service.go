@@ -25,6 +25,10 @@ func New(projectRoot string) *MemoryService {
 
 func (s *MemoryService) ProjectRoot() string { return s.projectRoot }
 
+// Close closes the underlying index (and its SQLite connection).
+// After Close, the service must not be used without reinitialization.
+func (s *MemoryService) Close() error { return s.idx.Close() }
+
 func (s *MemoryService) InitProject() error {
 	if s.initDone.Load() { return nil }
 	if err := store.EnsureProjectMemory(s.projectRoot); err != nil { return fmt.Errorf("init project: %w", err) }
@@ -45,7 +49,7 @@ func (s *MemoryService) Remember(payload map[string]any) (map[string]any, error)
 		path, err := store.WriteCard(s.projectRoot, &card, false)
 		if err != nil { lastErr = err; continue }
 		if err := s.idx.Upsert(&card); err != nil { store.RemoveCard(path); return nil, fmt.Errorf("remember: index error: %w", err) }
-		_ = s.SynthesizeRules()
+		_, _ = s.SynthesizeRules()
 		result := cardToMap(&card)
 		result["path"] = path
 		result["notification"] = buildNotification(&card)
@@ -114,9 +118,8 @@ func (s *MemoryService) UpdateMemory(memoryID string, updates map[string]any) (m
 
 func (s *MemoryService) RebuildIndex() error { return s.idx.Rebuild() }
 
-func (s *MemoryService) SynthesizeRules() error {
-	_, err := rule.Synthesize(s.projectRoot)
-	return err
+func (s *MemoryService) SynthesizeRules() (*rule.RulesDocument, error) {
+	return rule.Synthesize(s.projectRoot)
 }
 
 func has(slice []string, item string) bool {

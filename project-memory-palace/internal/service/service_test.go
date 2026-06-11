@@ -34,6 +34,7 @@ func validPayload() map[string]any {
 
 func TestServiceInitProject(t *testing.T) {
 	svc := testService(t)
+	defer svc.Close()
 	if svc.ProjectRoot() == "" {
 		t.Fatal("ProjectRoot should be non-empty after InitProject")
 	}
@@ -41,6 +42,7 @@ func TestServiceInitProject(t *testing.T) {
 
 func TestRememberAndRecall(t *testing.T) {
 	svc := testService(t)
+	defer svc.Close()
 	payload := validPayload()
 
 	card, err := svc.Remember(payload)
@@ -70,6 +72,7 @@ func TestRememberAndRecall(t *testing.T) {
 
 func TestOpenMemory(t *testing.T) {
 	svc := testService(t)
+	defer svc.Close()
 	payload := validPayload()
 
 	card, err := svc.Remember(payload)
@@ -92,6 +95,7 @@ func TestOpenMemory(t *testing.T) {
 
 func TestOpenMemoryNotFound(t *testing.T) {
 	svc := testService(t)
+	defer svc.Close()
 
 	_, err := svc.OpenMemory("mem_20990101_001")
 	if err == nil {
@@ -108,6 +112,7 @@ func TestOpenMemoryNotFound(t *testing.T) {
 
 func TestListRecent(t *testing.T) {
 	svc := testService(t)
+	defer svc.Close()
 
 	for i, title := range []string{"First", "Second"} {
 		p := validPayload()
@@ -131,6 +136,7 @@ func TestListRecent(t *testing.T) {
 
 func TestUpdateMemory(t *testing.T) {
 	svc := testService(t)
+	defer svc.Close()
 	card, err := svc.Remember(validPayload())
 	if err != nil {
 		t.Fatalf("Remember: %v", err)
@@ -178,6 +184,7 @@ func TestUpdateMemory(t *testing.T) {
 
 func TestRebuildIndex(t *testing.T) {
 	svc := testService(t)
+	defer svc.Close()
 	payload := validPayload()
 	card, err := svc.Remember(payload)
 	if err != nil {
@@ -203,6 +210,7 @@ func TestRebuildIndex(t *testing.T) {
 
 func TestRememberMissingFields(t *testing.T) {
 	svc := testService(t)
+	defer svc.Close()
 
 	payload := map[string]any{"type": "decision"}
 	_, err := svc.Remember(payload)
@@ -213,6 +221,7 @@ func TestRememberMissingFields(t *testing.T) {
 
 func TestUpdateNoChanges(t *testing.T) {
 	svc := testService(t)
+	defer svc.Close()
 	card, err := svc.Remember(validPayload())
 	if err != nil {
 		t.Fatalf("Remember: %v", err)

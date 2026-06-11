@@ -2,16 +2,19 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"syscall"
 
 	"github.com/atop/project-memory-palace/internal/audit"
+	"github.com/atop/project-memory-palace/internal/mcp"
 	"github.com/atop/project-memory-palace/internal/service"
 	"github.com/atop/project-memory-palace/internal/tray"
 	"gopkg.in/yaml.v3"
-	"github.com/atop/project-memory-palace/internal/mcp"
 )
 
 var projectRoot string
@@ -33,7 +36,7 @@ func run() int {
 	args := flag.Args()
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: pmem [--project-root <dir>] <command> [args...]")
-		fmt.Fprintln(os.Stderr, "commands: init, remember, search, open, recent, update, rebuild-index, audit")
+		fmt.Fprintln(os.Stderr, "commands: init, remember, search, open, recent, update, rebuild-index, audit, serve-mcp, serve-web, synthesize-rules")
 		return 1
 	}
 
@@ -57,6 +60,8 @@ func run() int {
 		return cmdRebuildIndex(cmdArgs)
 	case "serve-mcp":
 		return cmdServeMCP(cmdArgs)
+	case "serve-web":
+		return cmdServeWeb(cmdArgs)
 	case "synthesize-rules":
 		return cmdSynthesizeRules(cmdArgs)
 	case "audit":
@@ -77,6 +82,7 @@ func cmdInit(args []string) int {
 	svc, err := newService()
 	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
 	if err := svc.InitProject(); err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+	tray.AddRecent(projectRoot)
 	fmt.Printf("initialized: true\nproject-root: %s\n", projectRoot)
 	return 0
 }
@@ -193,8 +199,9 @@ func cmdSynthesizeRules(args []string) int {
 	_ = fs.Parse(args)
 	svc, err := newService()
 	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
-	if err := svc.SynthesizeRules(); err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
-	fmt.Printf("rules-synthesized: true\nproject-root: %s\n", projectRoot)
+	doc, err := svc.SynthesizeRules()
+	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+	fmt.Printf("rules-synthesized: true\nproject-root: %s\nrule-count: %d\n", projectRoot, len(doc.Rules))
 	return 0
 }
 
@@ -204,11 +211,89 @@ func cmdServeMCP(args []string) int {
 	svc, err := newService()
 	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
 	svc.InitProject()
+	tray.AddRecent(projectRoot)
 
 	reg := mcp.NewToolRegistry()
-	reg.Register("remember", "Write one durable project memory card.", map[string]any{
+	reg.Register("remember", "Write one durable project memory card. Required: type, title, summary, content. Include source to achieve confidence > 0.5.", map[string]any{
 		"type": "object",
-		"properties": map[string]any{"memory": map[string]any{"type": "object"}},
+		"properties": map[string]any{
+			"memory": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"type": map[string]any{
+						"type": "string",
+						"description": "Memory type: project_goal, design, decision, change_reason, bugfix, module, convention, or open_question",
+						"enum": []string{"project_goal", "design", "decision", "change_reason", "bugfix", "module", "convention", "open_question"},
+					},
+					"title": map[string]any{
+						"type": "string",
+						"description": "Memory title — concise and descriptive",
+					},
+					"summary": map[string]any{
+						"type": "string",
+						"description": "One-sentence summary for search results",
+					},
+					"content": map[string]any{
+						"type": "string",
+						"description": "Full content — explain the decision, convention, or finding in detail",
+					},
+					"confidence": map[string]any{
+						"type": "number",
+						"description": "Confidence 0.0-1.0. NOTE: capped at 0.5 unless source is provided (default: 0.5)",
+						"minimum": float64(0),
+						"maximum": float64(1),
+					},
+					"status": map[string]any{
+						"type": "string",
+						"description": "Memory status (default: active)",
+						"enum": []string{"active", "stale", "superseded", "rejected"},
+					},
+					"tags": map[string]any{
+						"type": "array",
+						"items": map[string]any{"type": "string"},
+						"description": "Categorization tags",
+					},
+					"source": map[string]any{
+						"type": "object",
+						"description": "Source information. REQUIRED for confidence > 0.5.",
+						"properties": map[string]any{
+							"kind": map[string]any{
+								"type": "string",
+								"description": "Source kind",
+								"enum": []string{"conversation", "file", "commit", "manual", "test", "analysis"},
+							},
+							"description": map[string]any{
+								"type": "string",
+								"description": "Human-readable source description",
+							},
+							"files": map[string]any{
+								"type": "array",
+								"items": map[string]any{"type": "string"},
+							},
+							"commits": map[string]any{
+								"type": "array",
+								"items": map[string]any{"type": "string"},
+							},
+						},
+						"required": []string{"kind", "description"},
+					},
+					"scope": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"project": map[string]any{"type": "string"},
+							"modules": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+							"paths": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						},
+					},
+					"relations": map[string]any{
+						"type": "object",
+						"description": "Relations to other memories, e.g. {\"supersedes\": [\"mem_20260101_001\"]}",
+					},
+				},
+				"required": []string{"type", "title", "summary", "content"},
+			},
+		},
+		"required": []string{"memory"},
 	}, func(params map[string]any) (any, error) {
 		mem, ok := params["memory"].(map[string]any)
 		if !ok { return nil, fmt.Errorf("memory parameter required") }
@@ -262,11 +347,25 @@ func cmdServeMCP(args []string) int {
 		if err != nil { return nil, err }
 		return map[string]any{"results": results}, nil
 	})
-	reg.Register("synthesize_rules", "Regenerate agent-rules.yaml from active cards.", map[string]any{
+	reg.Register("synthesize_rules", "Regenerate agent-rules.yaml from active convention and decision cards. Returns the full rules document so agents can inject them into context.", map[string]any{
 		"type": "object", "properties": map[string]any{},
 	}, func(params map[string]any) (any, error) {
-		if err := svc.SynthesizeRules(); err != nil { return nil, err }
-		return map[string]any{"status": "ok"}, nil
+		doc, err := svc.SynthesizeRules()
+		if err != nil { return nil, err }
+		rules := make([]map[string]any, len(doc.Rules))
+		for i, r := range doc.Rules {
+			rules[i] = map[string]any{
+				"id": r.ID, "source_memory": r.SourceMemory,
+				"title": r.Title, "category": r.Category,
+				"body": r.Body, "created_at": r.CreatedAt,
+			}
+		}
+		return map[string]any{
+			"version": doc.Version,
+			"synthesized_at": doc.SynthesizedAt,
+			"rule_count": len(doc.Rules),
+			"rules": rules,
+		}, nil
 	})
 
 	srv := &mcp.StdioServer{Registry: reg, Reader: os.Stdin, Writer: os.Stdout}
@@ -276,4 +375,84 @@ func cmdServeMCP(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func cmdServeWeb(args []string) int {
+	projectRoot = "."
+	if len(args) > 0 { projectRoot = args[0] }
+	svc, err := newService()
+	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+	svc.InitProject()
+	tray.AddRecent(projectRoot)
+
+	// REST API routes
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(tray.RenderIndex(projectRoot)))
+	})
+	http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	})
+	http.HandleFunc("/api/recent", func(w http.ResponseWriter, r *http.Request) {
+		results, err := svc.ListRecent(50)
+		writeWebJSONList(w, results, err)
+	})
+	http.HandleFunc("/api/search", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		if q == "" { writeWebJSONList(w, nil, nil); return }
+		results, err := svc.Recall(q, nil, 30)
+		writeWebJSONList(w, results, err)
+	})
+	http.HandleFunc("/api/open", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		result, err := svc.OpenMemory(id)
+		writeWebJSONRaw(w, result, err)
+	})
+	http.HandleFunc("/api/update", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" { http.Error(w, "POST required", 405); return }
+		id := r.URL.Query().Get("id")
+		status := r.URL.Query().Get("status")
+		result, err := svc.UpdateMemory(id, map[string]any{"status": status})
+		writeWebJSONRaw(w, result, err)
+	})
+	http.HandleFunc("/api/project", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"root": projectRoot, "recents": tray.RecentList()})
+	})
+	http.HandleFunc("/api/project/set", func(w http.ResponseWriter, r *http.Request) {
+		newRoot := r.URL.Query().Get("root")
+		if newRoot == "" { http.Error(w, "root parameter required", 400); return }
+		projectRoot = newRoot
+		svc = service.New(projectRoot)
+		svc.InitProject()
+		tray.AddRecent(newRoot)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"root": projectRoot, "recents": tray.RecentList()})
+	})
+	http.HandleFunc("/api/projects/recent", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"recents": tray.RecentList()})
+	})
+
+	fmt.Fprintf(os.Stderr, "Web UI server starting at http://127.0.0.1:8147\n")
+	fmt.Fprintf(os.Stderr, "Project root: %s\n", projectRoot)
+	if err := http.ListenAndServe("127.0.0.1:8147", nil); err != nil {
+		log.Printf("HTTP server error: %v", err)
+		return 1
+	}
+	return 0
+}
+
+func writeWebJSONList(w http.ResponseWriter, results []map[string]any, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil { json.NewEncoder(w).Encode(map[string]any{"error": err.Error()}); return }
+	if results == nil { results = []map[string]any{} }
+	json.NewEncoder(w).Encode(map[string]any{"results": results})
+}
+
+func writeWebJSONRaw(w http.ResponseWriter, data map[string]any, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil { json.NewEncoder(w).Encode(map[string]any{"error": err.Error()}); return }
+	json.NewEncoder(w).Encode(data)
 }

@@ -83,6 +83,35 @@ func saveRecents() {
 	os.WriteFile(recentsPath, data, 0644)
 }
 
+// AddRecent records a project root path in the shared recents list
+// (persisted to APPDATA/project-memory-palace/recents.json).
+func AddRecent(root string) {
+	seen := map[string]bool{}
+	root = filepath.Clean(root)
+	seen[root] = true
+	for _, r := range recents {
+		if !seen[r] && len(seen) < 20 {
+			seen[r] = true
+		}
+	}
+	var deduped []string
+	deduped = append(deduped, root)
+	for _, r := range recents {
+		if r != root { deduped = append(deduped, r) }
+	}
+	recents = deduped
+	os.MkdirAll(filepath.Dir(recentsPath), 0700)
+	data, _ := json.Marshal(recents)
+	os.WriteFile(recentsPath, data, 0644)
+}
+
+// RecentList returns a copy of the shared recents list.
+func RecentList() []string {
+	out := make([]string, len(recents))
+	copy(out, recents)
+	return out
+}
+
 func Run(root string) {
 	projectRoot = root
 	svc = service.New(projectRoot)
@@ -178,11 +207,86 @@ func startAPI() {
 }
 
 func registerMCPTools(reg *mcp.ToolRegistry) {
-	reg.Register("remember", "Write one durable project memory card.", map[string]any{
+	reg.Register("remember", "Write one durable project memory card. Required: type, title, summary, content. Include source to achieve confidence > 0.5.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"memory": map[string]any{"type": "object"},
+			"memory": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"type": map[string]any{
+						"type": "string",
+						"description": "Memory type: project_goal, design, decision, change_reason, bugfix, module, convention, or open_question",
+						"enum": []string{"project_goal", "design", "decision", "change_reason", "bugfix", "module", "convention", "open_question"},
+					},
+					"title": map[string]any{
+						"type": "string",
+						"description": "Memory title — concise and descriptive",
+					},
+					"summary": map[string]any{
+						"type": "string",
+						"description": "One-sentence summary for search results",
+					},
+					"content": map[string]any{
+						"type": "string",
+						"description": "Full content — explain the decision, convention, or finding in detail",
+					},
+					"confidence": map[string]any{
+						"type": "number",
+						"description": "Confidence 0.0-1.0. NOTE: capped at 0.5 unless source is provided (default: 0.5)",
+						"minimum": float64(0),
+						"maximum": float64(1),
+					},
+					"status": map[string]any{
+						"type": "string",
+						"description": "Memory status (default: active)",
+						"enum": []string{"active", "stale", "superseded", "rejected"},
+					},
+					"tags": map[string]any{
+						"type": "array",
+						"items": map[string]any{"type": "string"},
+						"description": "Categorization tags",
+					},
+					"source": map[string]any{
+						"type": "object",
+						"description": "Source information. REQUIRED for confidence > 0.5.",
+						"properties": map[string]any{
+							"kind": map[string]any{
+								"type": "string",
+								"description": "Source kind",
+								"enum": []string{"conversation", "file", "commit", "manual", "test", "analysis"},
+							},
+							"description": map[string]any{
+								"type": "string",
+								"description": "Human-readable source description",
+							},
+							"files": map[string]any{
+								"type": "array",
+								"items": map[string]any{"type": "string"},
+							},
+							"commits": map[string]any{
+								"type": "array",
+								"items": map[string]any{"type": "string"},
+							},
+						},
+						"required": []string{"kind", "description"},
+					},
+					"scope": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"project": map[string]any{"type": "string"},
+							"modules": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+							"paths": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						},
+					},
+					"relations": map[string]any{
+						"type": "object",
+						"description": "Relations to other memories, e.g. {\"supersedes\": [\"mem_20260101_001\"]}",
+					},
+				},
+				"required": []string{"type", "title", "summary", "content"},
+			},
 		},
+		"required": []string{"memory"},
 	}, func(params map[string]any) (any, error) {
 		mem, ok := params["memory"].(map[string]any)
 		if !ok { return nil, fmt.Errorf("memory parameter required") }
@@ -245,13 +349,27 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 		return map[string]any{"results": results}, nil
 	})
 
-	reg.Register("synthesize_rules", "Regenerate agent-rules.yaml from active convention and decision cards.", map[string]any{
+	reg.Register("synthesize_rules", "Regenerate agent-rules.yaml from active convention and decision cards. Returns the full rules document so agents can inject them into context.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{},
 	}, func(params map[string]any) (any, error) {
 		mu.Lock(); defer mu.Unlock()
-		if err := svc.SynthesizeRules(); err != nil { return nil, err }
-		return map[string]any{"rule_count": 0, "rules": []any{}}, nil
+		doc, err := svc.SynthesizeRules()
+		if err != nil { return nil, err }
+		rules := make([]map[string]any, len(doc.Rules))
+		for i, r := range doc.Rules {
+			rules[i] = map[string]any{
+				"id": r.ID, "source_memory": r.SourceMemory,
+				"title": r.Title, "category": r.Category,
+				"body": r.Body, "created_at": r.CreatedAt,
+			}
+		}
+		return map[string]any{
+			"version": doc.Version,
+			"synthesized_at": doc.SynthesizedAt,
+			"rule_count": len(doc.Rules),
+			"rules": rules,
+		}, nil
 	})
 }
 
@@ -342,4 +460,9 @@ func writeJSONRaw(w http.ResponseWriter, data map[string]any, err error) {
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+}
+
+// RenderIndex substitutes the project root into the embedded index.html template.
+func RenderIndex(root string) string {
+	return strings.ReplaceAll(indexHTML, "{{.ProjectRoot}}", root)
 }
