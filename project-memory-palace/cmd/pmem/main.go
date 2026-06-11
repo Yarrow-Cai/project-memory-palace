@@ -13,6 +13,7 @@ import (
 	"github.com/atop/project-memory-palace/internal/audit"
 	"github.com/atop/project-memory-palace/internal/mcp"
 	"github.com/atop/project-memory-palace/internal/service"
+	"github.com/atop/project-memory-palace/internal/store"
 	"github.com/atop/project-memory-palace/internal/tray"
 	"gopkg.in/yaml.v3"
 )
@@ -210,10 +211,32 @@ func cmdServeMCP(args []string) int {
 	if len(args) > 0 { projectRoot = args[0] }
 	svc, err := newService()
 	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
-	svc.InitProject()
-	tray.AddRecent(projectRoot)
 
 	reg := mcp.NewToolRegistry()
+	reg.Register("init_project", "Initialize Project Memory Palace for this project. Call this FIRST — returns project context (active rules, recent activity, next-step guide) in one shot. Creates .project-memory/ directory tree. Safe to call repeatedly (idempotent).", map[string]any{
+		"type": "object", "properties": map[string]any{},
+	}, func(params map[string]any) (any, error) {
+		if err := svc.InitProject(); err != nil { return nil, err }
+		tray.AddRecent(projectRoot)
+		result := map[string]any{"status": "initialized", "project_root": projectRoot}
+		// Include active rules inline (ex-project_context + ex-get_rules, one call)
+		data, err := os.ReadFile(store.RulesPath(svc.ProjectRoot()))
+		if err == nil {
+			var doc map[string]any
+			if yaml.Unmarshal(data, &doc) == nil {
+				result["rules"] = doc["rules"]
+			}
+		}
+		recent, _ := svc.ListRecent(5)
+		result["recent"] = recent
+		result["next"] = []string{
+			"1. recall query=<keyword> - search project memory by topic or file path",
+			"2. open_memory id=<id> - get full card details when summary isn't enough",
+			"3. remember memory={...} - persist new knowledge after completing work",
+		}
+		return result, nil
+	})
+
 	reg.Register("remember", "Write one durable project memory card. Required: type, title, summary, content. Include source to achieve confidence > 0.5.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -299,7 +322,7 @@ func cmdServeMCP(args []string) int {
 		if !ok { return nil, fmt.Errorf("memory parameter required") }
 		return svc.Remember(mem)
 	})
-	reg.Register("recall", "Retrieve relevant memory summaries.", map[string]any{
+	reg.Register("recall", "Search memories (Level 2 disclosure). Returns short summaries only. Filter by paths to get file-specific context. Has more? Increase limit. Need details? Use open_memory.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"query": map[string]any{"type": "string"},
@@ -310,13 +333,13 @@ func cmdServeMCP(args []string) int {
 		query := ""
 		if v, ok := params["query"].(string); ok { query = v }
 		filters, _ := params["filters"].(map[string]any)
-		limit := 5
+		limit := 3
 		if v, ok := params["limit"].(float64); ok { limit = int(v) }
 		results, err := svc.Recall(query, filters, limit)
 		if err != nil { return nil, err }
 		return map[string]any{"results": results}, nil
 	})
-	reg.Register("open_memory", "Open one full memory card by ID.", map[string]any{
+	reg.Register("open_memory", "Level 3 disclosure: Get full card content by ID. Only call after recall returns a summary you need more detail on.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{"id": map[string]any{"type": "string"}},
 	}, func(params map[string]any) (any, error) {
@@ -347,7 +370,7 @@ func cmdServeMCP(args []string) int {
 		if err != nil { return nil, err }
 		return map[string]any{"results": results}, nil
 	})
-	reg.Register("synthesize_rules", "Regenerate agent-rules.yaml from active convention and decision cards. Returns the full rules document so agents can inject them into context.", map[string]any{
+	reg.Register("synthesize_rules", "Regenerate agent-rules.yaml from active convention and decision cards. Returns the full rules document. NOTE: init_project already returns the latest rules — use this only when you've written new memories and need fresh rules.", map[string]any{
 		"type": "object", "properties": map[string]any{},
 	}, func(params map[string]any) (any, error) {
 		doc, err := svc.SynthesizeRules()

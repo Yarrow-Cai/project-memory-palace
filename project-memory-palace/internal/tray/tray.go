@@ -10,7 +10,10 @@ import (
 	"strings"
 	"sync"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/atop/project-memory-palace/internal/mcp"
+	"github.com/atop/project-memory-palace/internal/store"
 	"github.com/atop/project-memory-palace/internal/service"
 	"github.com/getlantern/systray"
 	_ "embed"
@@ -207,6 +210,30 @@ func startAPI() {
 }
 
 func registerMCPTools(reg *mcp.ToolRegistry) {
+	reg.Register("init_project", "Initialize Project Memory Palace for this project. Call this FIRST — returns project context (active rules, recent activity, next-step guide) in one shot. Creates .project-memory/ directory tree. Safe to call repeatedly.", map[string]any{
+		"type": "object", "properties": map[string]any{},
+	}, func(params map[string]any) (any, error) {
+		mu.Lock(); defer mu.Unlock()
+		if err := svc.InitProject(); err != nil { return nil, err }
+		saveRecents()
+		result := map[string]any{"status": "initialized", "project_root": projectRoot}
+		data, err := os.ReadFile(store.RulesPath(svc.ProjectRoot()))
+		if err == nil {
+			var doc map[string]any
+			if yaml.Unmarshal(data, &doc) == nil {
+				result["rules"] = doc["rules"]
+			}
+		}
+		recent, _ := svc.ListRecent(5)
+		result["recent"] = recent
+		result["next"] = []string{
+			"1. recall query=<keyword> - search project memory by topic or file path",
+			"2. open_memory id=<id> - get full card details when summary isn't enough",
+			"3. remember memory={...} - persist new knowledge after completing work",
+		}
+		return result, nil
+	})
+
 	reg.Register("remember", "Write one durable project memory card. Required: type, title, summary, content. Include source to achieve confidence > 0.5.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -294,7 +321,7 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 		return svc.Remember(mem)
 	})
 
-	reg.Register("recall", "Retrieve relevant memory summaries.", map[string]any{
+	reg.Register("recall", "Level 2: Search memories by keyword or file path. Returns summaries only. Filter by path for file-specific context. Has more? Increase limit. Need details? Use open_memory.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"query":   map[string]any{"type": "string"},
@@ -304,14 +331,14 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 	}, func(params map[string]any) (any, error) {
 		query := getStr(params, "query")
 		filters, _ := params["filters"].(map[string]any)
-		limit := getInt(params, "limit", 5)
+		limit := getInt(params, "limit", 3)
 		mu.Lock(); defer mu.Unlock()
 		results, err := svc.Recall(query, filters, limit)
 		if err != nil { return nil, err }
 		return map[string]any{"results": results}, nil
 	})
 
-	reg.Register("open_memory", "Open one full memory card by ID.", map[string]any{
+	reg.Register("open_memory", "Level 3: Get full card content by ID. Only call after recall returns a summary you need detail on.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"id": map[string]any{"type": "string"},
@@ -371,6 +398,7 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 			"rules": rules,
 		}, nil
 	})
+
 }
 
 func getStr(params map[string]any, key string) string {
