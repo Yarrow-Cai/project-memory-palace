@@ -1,13 +1,8 @@
 ﻿package tray
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"image"
-	"image/color"
-	"image/draw"
-	"image/png"
 	"net/http"
 	"os"
 	"os/exec"
@@ -25,22 +20,11 @@ import (
 //go:embed templates/index.html
 var indexHTML string
 
-func generatePNG() []byte {
-	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
-	blue := image.NewUniform(color.RGBA{43, 87, 151, 255})
-	white := image.NewUniform(color.RGBA{255, 255, 255, 255})
-	draw.Draw(img, img.Bounds(), blue, image.Point{}, draw.Src)
-	draw.Draw(img, image.Rect(4, 6, 28, 26), white, image.Point{}, draw.Src)
-	draw.Draw(img, image.Rect(9, 9, 12, 23), blue, image.Point{}, draw.Src)
-	draw.Draw(img, image.Rect(12, 9, 21, 12), blue, image.Point{}, draw.Src)
-	draw.Draw(img, image.Rect(12, 15, 21, 18), blue, image.Point{}, draw.Src)
-	var buf bytes.Buffer
-	png.Encode(&buf, img)
-	return buf.Bytes()
-}
+//go:embed icon.png
+var iconPNG []byte
 
-func generateICO() []byte {
-	pngData := generatePNG()
+func buildICO() []byte {
+	pngData := iconPNG
 	pngSize := len(pngData)
 	buf := make([]byte, 22+pngSize)
 	buf[0], buf[1] = 0, 0
@@ -66,7 +50,7 @@ var (
 	mcpRunning  bool
 	recentsPath string
 	recents     []string
-	iconICO     = generateICO()
+	iconICO     = buildICO()
 )
 
 func init() {
@@ -115,9 +99,9 @@ func onReady() {
 	mShow := systray.AddMenuItem("Show", "Open in browser")
 	systray.AddSeparator()
 	mCopyMCP := systray.AddMenuItem("Copy MCP Config", "Copy SSE MCP configuration to clipboard")
-	mMCPStatus := systray.AddMenuItem("MCP: Running", "")
+	mMCPStatus := systray.AddMenuItem("MCP: Stopped", "")
 	mMCPStatus.Disable()
-	mMCPToggle := systray.AddMenuItem("Stop MCP", "")
+	mMCPToggle := systray.AddMenuItem("Start MCP", "")
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Exit application")
 
@@ -125,7 +109,7 @@ func onReady() {
 		for {
 			select {
 			case <-mShow.ClickedCh:
-				exec.Command("cmd", "/c", "start", "http://localhost127.0.0.1:8147").Start()
+				exec.Command("cmd", "/c", "start", "http://127.0.0.1:8147").Start()
 			case <-mCopyMCP.ClickedCh:
 				copyMCPConfig()
 			case <-mMCPToggle.ClickedCh:
@@ -158,16 +142,16 @@ func toggleMCP(si, bi *systray.MenuItem) {
 		bi.SetTitle("Start MCP")
 	} else {
 		exe, _ := os.Executable()
-		for _, p := range []string{filepath.Join(filepath.Dir(exe), "pmem-mcp.exe"), "pmem-mcp.exe", "./pmem-mcp.exe"} {
-			if _, err := os.Stat(p); err == nil {
-				mcpCmd = exec.Command(p)
-				mcpCmd.Start()
-				mcpRunning = true
-				si.SetTitle("MCP: Running")
-				bi.SetTitle("Stop MCP")
-				return
-			}
+		mcpCmd = exec.Command(exe, "serve-mcp", projectRoot)
+		mcpCmd.Stdout = os.Stderr
+		mcpCmd.Stderr = os.Stderr
+		if err := mcpCmd.Start(); err != nil {
+			si.SetTitle("MCP: Error - " + err.Error())
+			return
 		}
+		mcpRunning = true
+		si.SetTitle("MCP: Running")
+		bi.SetTitle("Stop MCP")
 	}
 }
 
@@ -192,7 +176,6 @@ func startAPI() {
 		log.Printf("HTTP server error: %v", err)
 	}
 }
-
 
 func registerMCPTools(reg *mcp.ToolRegistry) {
 	reg.Register("remember", "Write one durable project memory card.", map[string]any{
@@ -355,7 +338,6 @@ func writeJSONRaw(w http.ResponseWriter, data map[string]any, err error) {
 	if err != nil { json.NewEncoder(w).Encode(map[string]any{"error": err.Error()}); return }
 	json.NewEncoder(w).Encode(data)
 }
-
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
