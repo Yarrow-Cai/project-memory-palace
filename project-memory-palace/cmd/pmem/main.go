@@ -270,11 +270,10 @@ func cmdServeMCP(args []string) int {
 	})
 
 	srv := &mcp.StdioServer{Registry: reg, Reader: os.Stdin, Writer: os.Stdout}
-	for {
-		if err := srv.HandleOne(); err != nil {
-			if err.Error() == "EOF" { return 0 }
-			fmt.Fprintf(os.Stderr, "mcp error: %v\n", err)
-			return 1
-		}
+	fmt.Fprintln(os.Stderr, "MCP server started")
+	if err := srv.Serve(); err != nil {
+		fmt.Fprintf(os.Stderr, "mcp error: %v\n", err)
+		return 1
 	}
+	return 0
 }
