@@ -345,7 +345,12 @@ function showDetail(id){
     '<div class="detail-header skeleton"><div style="height:28px;width:70%;background:var(--surface2);border-radius:4px;margin-bottom:12px"></div><div style="height:14px;width:40%;background:var(--surface2);border-radius:4px"></div></div>'+
     '<div class="detail-card skeleton"><div style="height:14px;width:20%;background:var(--surface2);border-radius:4px;margin-bottom:10px"></div><div style="height:12px;width:90%;background:var(--surface2);border-radius:4px;margin:6px 0"></div><div style="height:12px;width:85%;background:var(--surface2);border-radius:4px;margin:6px 0"></div></div>';
   api('/api/open?id='+id).then(renderDetail);
-  if(activeTab!=='detail')switchTab('detail');
+  // Switch to detail tab silently — avoid re-calling showDetail
+  if(activeTab!=='detail'){
+    activeTab='detail';
+    document.querySelectorAll('.tabs button').forEach(function(b){b.classList.remove('active')});
+    document.getElementById('tab-detail').classList.add('active');
+  }
 }
 
 function renderDetail(d){
@@ -413,20 +418,20 @@ function loadRules(){
 
 function simpleMarkdown(md){
   if(!md)return'';
+  // Escape HTML, then apply simple markdown rules
   return md
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/^### (.+)$/gm,'<h3>$1</h3>')
     .replace(/^## (.+)$/gm,'<h2>$1</h2>')
     .replace(/^# (.+)$/gm,'<h1>$1</h1>')
-    .replace(/^> (.+)$/gm,'<blockquote>$1</blockquote>')
+    .replace(/^&gt; (.+)$/gm,'<blockquote>$1</blockquote>')
     .replace(/`([^`]+)`/g,'<code>$1</code>')
     .replace(/^- (.+)$/gm,'<li>$1</li>')
-    .replace(/^(\d+)\. (.+)$/gm,'<li>$2</li>')
     .replace(/(<li>[\s\S]*?<\/li>)/g,'<ul>$1</ul>')
-    .replace(/<\/ul>\n<ul>/g,'')
+    .replace(/<\/ul>\s*<ul>/g,'')
     .replace(/^---$/gm,'<hr>')
-    .replace(/\n\n/g,'<br><br>')
-    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\n\n+/g,'<br><br>');
 }
 
 function loadStats(){
