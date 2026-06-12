@@ -186,7 +186,12 @@ func (s *SSEServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			resp = NewErrorResponse(req.ID, -32603, err.Error())
 		} else {
-			resp = NewResponse(req.ID, result)
+			resultJSON, _ := json.Marshal(result)
+			resp = NewResponse(req.ID, map[string]any{
+				"content": []map[string]any{
+					{"type": "text", "text": string(resultJSON)},
+				},
+			})
 		}
 	case "notifications/initialized":
 		w.WriteHeader(http.StatusAccepted)

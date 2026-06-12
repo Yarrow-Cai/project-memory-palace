@@ -47,6 +47,18 @@ func TestStdioServer(t *testing.T) {
 	var resp Response
 	json.Unmarshal(out.Bytes(), &resp)
 	if resp.Error != nil { t.Fatalf("unexpected error: %+v", resp.Error) }
+	// Verify MCP-compliant content format
+	resultMap, ok := resp.Result.(map[string]any)
+	if !ok { t.Fatal("result should be an object with content array") }
+	content, ok := resultMap["content"].([]any)
+	if !ok || len(content) == 0 { t.Fatal("result should have non-empty content array") }
+	item, ok := content[0].(map[string]any)
+	if !ok { t.Fatal("content[0] should be an object") }
+	if item["type"] != "text" { t.Fatal("content[0].type should be 'text'") }
+	// Verify inner JSON
+	var inner string
+	json.Unmarshal([]byte(item["text"].(string)), &inner)
+	if inner != "pong" { t.Fatalf("expected 'pong' in content text, got %q", inner) }
 }
 
 func TestParseInvalid(t *testing.T) {

@@ -115,7 +115,16 @@ func (s *StdioServer) Serve() error {
 			args, _ := req.Params["arguments"].(map[string]any)
 			if args == nil { args = map[string]any{} }
 			result, err := s.Registry.Dispatch(name, args)
-			if err != nil { resp = NewErrorResponse(req.ID, -32603, err.Error()) } else { resp = NewResponse(req.ID, result) }
+			if err != nil {
+				resp = NewErrorResponse(req.ID, -32603, err.Error())
+			} else {
+				resultJSON, _ := json.Marshal(result)
+				resp = NewResponse(req.ID, map[string]any{
+					"content": []map[string]any{
+						{"type": "text", "text": string(resultJSON)},
+					},
+				})
+			}
 		default:
 			resp = NewErrorResponse(req.ID, -32601, fmt.Sprintf("unknown method: %s", req.Method))
 		}
