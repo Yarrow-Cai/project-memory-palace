@@ -324,9 +324,15 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 	reg.Register("recall", "Level 2: Search memories by keyword or file path. Returns summaries only. Filter by path for file-specific context. Has more? Increase limit. Need details? Use open_memory.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"query":   map[string]any{"type": "string"},
-			"filters": map[string]any{"type": "object"},
-			"limit":   map[string]any{"type": "integer"},
+			"query": map[string]any{
+				"type":        "string",
+				"description": "Search keyword or phrase. Supports both English and Chinese.",
+			},
+			"filters": map[string]any{
+				"type": "object",
+				"description": "Optional filters: status (string), paths (array of strings).",
+			},
+			"limit": map[string]any{"type": "integer"},
 		},
 	}, func(params map[string]any) (any, error) {
 		query := getStr(params, "query")
@@ -349,12 +355,16 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 		return svc.OpenMemory(id)
 	})
 
-	reg.Register("update_memory", "Update an existing memory card.", map[string]any{
+	reg.Register("update_memory", "Update an existing memory card. Use to mark memories as stale, change confidence, add tags, or update relations.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"id":      map[string]any{"type": "string"},
-			"updates": map[string]any{"type": "object"},
+			"id": map[string]any{"type": "string", "description": "Memory card ID (e.g. 'mem_20260612_001')."},
+			"updates": map[string]any{
+				"type": "object",
+				"description": "Fields to update: status, confidence, tags, relations.",
+			},
 		},
+		"required": []string{"id", "updates"},
 	}, func(params map[string]any) (any, error) {
 		id := getStr(params, "id")
 		updates, ok := params["updates"].(map[string]any)

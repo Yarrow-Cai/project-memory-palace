@@ -13,6 +13,8 @@ var MemoryStatuses = map[string]bool{
 var SourceKinds = map[string]bool{
 	"conversation": true, "file": true, "commit": true,
 	"manual": true, "test": true, "analysis": true,
+	"convention": true, "experiment": true, "observation": true,
+	"documentation": true, "review": true, "specification": true,
 }
 
 var RelationKinds = []string{

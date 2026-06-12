@@ -13,7 +13,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var ftsTokenRe = regexp.MustCompile(`[^\W_]+`)
+var (
+	cjkRe = regexp.MustCompile(`[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}]+`)
+)
 
 const schemaDDL = `
 CREATE TABLE IF NOT EXISTS memories (
@@ -33,6 +35,50 @@ CREATE TABLE IF NOT EXISTS memory_paths (
     memory_id TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY (memory_id, path)
 );
 `
+
+// cjkBigram converts a CJK string into space-separated bigrams for FTS indexing.
+// "逆变器" → "逆变 变器"；单/双字直接返回原串
+func cjkBigram(s string) string {
+	runes := []rune(s)
+	if len(runes) <= 2 {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(runes)-1; i++ {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteRune(runes[i])
+		b.WriteRune(runes[i+1])
+	}
+	return b.String()
+}
+
+// ftsPreprocess preprocesses text for FTS5 storage:
+// ASCII words pass through; CJK runs are converted to bigrams.
+func ftsPreprocess(text string) string {
+	parts := cjkRe.Split(text, -1)
+	cjkParts := cjkRe.FindAllString(text, -1)
+	var out strings.Builder
+	for i := 0; i < len(parts) || i < len(cjkParts); i++ {
+		if i < len(parts) && parts[i] != "" {
+			if out.Len() > 0 {
+				out.WriteByte(' ')
+			}
+			out.WriteString(strings.TrimSpace(parts[i]))
+		}
+		if i < len(cjkParts) {
+			bg := cjkBigram(cjkParts[i])
+			if bg != "" {
+				if out.Len() > 0 {
+					out.WriteByte(' ')
+				}
+				out.WriteString(bg)
+			}
+		}
+	}
+	return out.String()
+}
 
 type MemoryIndex struct {
 	projectRoot string
@@ -107,7 +153,7 @@ func doUpsert(tx *sql.Tx, card *memory.MemoryCard) error {
 	_, err = tx.Exec(q, card.ID, card.Type, card.Status, card.Title, card.Summary, card.Source.Kind, card.Confidence, string(tagsJSON), string(modsJSON), string(pathsJSON), card.UpdatedAt)
 	if err != nil { return fmt.Errorf("upsert: %w", err) }
 	if _, err := tx.Exec("DELETE FROM memory_fts WHERE id=?", card.ID); err != nil { return fmt.Errorf("upsert fts delete: %w", err) }
-	if _, err := tx.Exec("INSERT INTO memory_fts(id,title,summary,content,tags,modules,paths) VALUES(?,?,?,?,?,?,?)", card.ID, card.Title, card.Summary, card.Content, strings.Join(card.Tags," "), strings.Join(card.Scope.Modules," "), strings.Join(card.Scope.Paths," ")); err != nil { return fmt.Errorf("upsert fts insert: %w", err) }
+	if _, err := tx.Exec("INSERT INTO memory_fts(id,title,summary,content,tags,modules,paths) VALUES(?,?,?,?,?,?,?)", card.ID, ftsPreprocess(card.Title), ftsPreprocess(card.Summary), ftsPreprocess(card.Content), ftsPreprocess(strings.Join(card.Tags," ")), ftsPreprocess(strings.Join(card.Scope.Modules," ")), ftsPreprocess(strings.Join(card.Scope.Paths," "))); err != nil { return fmt.Errorf("upsert fts insert: %w", err) }
 	if _, err := tx.Exec("DELETE FROM memory_paths WHERE memory_id=?", card.ID); err != nil { return fmt.Errorf("upsert paths delete: %w", err) }
 	for _, p := range card.Scope.Paths {
 		if _, err := tx.Exec("INSERT OR IGNORE INTO memory_paths(memory_id,path) VALUES(?,?)", card.ID, p); err != nil { return fmt.Errorf("upsert path insert: %w", err) }
@@ -201,9 +247,15 @@ func (idx *MemoryIndex) Rebuild() error {
 }
 
 func toFTSQuery(query string) string {
-	terms := ftsTokenRe.FindAllString(query, -1)
-	if len(terms) == 0 { return "" }
+	// Apply same bigram preprocessing as storage, then split into tokens
+	preprocessed := ftsPreprocess(query)
+	terms := strings.Fields(preprocessed)
+	if len(terms) == 0 {
+		return ""
+	}
 	quoted := make([]string, len(terms))
-	for i, t := range terms { quoted[i] = "\"" + strings.ReplaceAll(t, "\"", "\"\"") + "\"" }
+	for i, t := range terms {
+		quoted[i] = "\"" + strings.ReplaceAll(t, "\"", "\"\"") + "\""
+	}
 	return strings.Join(quoted, " ")
 }

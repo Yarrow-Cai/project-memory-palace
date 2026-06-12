@@ -325,8 +325,18 @@ func cmdServeMCP(args []string) int {
 	reg.Register("recall", "Search memories (Level 2 disclosure). Returns short summaries only. Filter by paths to get file-specific context. Has more? Increase limit. Need details? Use open_memory.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"query": map[string]any{"type": "string"},
-			"filters": map[string]any{"type": "object"},
+			"query": map[string]any{
+				"type":        "string",
+				"description": "Search keyword or phrase. Supports both English and Chinese. Use concise terms for best results (e.g. 'PWM', '中断', '逆变器').",
+			},
+			"filters": map[string]any{
+				"type": "object",
+				"description": "Optional filters: status (string), paths (string or array of strings to filter by file path).",
+				"properties": map[string]any{
+					"status": map[string]any{"type": "string", "description": "Filter by memory status: active, stale, superseded, rejected."},
+					"paths":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter by file paths associated with the memory."},
+				},
+			},
 			"limit": map[string]any{"type": "integer"},
 		},
 	}, func(params map[string]any) (any, error) {
@@ -347,12 +357,16 @@ func cmdServeMCP(args []string) int {
 		if v, ok := params["id"].(string); ok { id = v }
 		return svc.OpenMemory(id)
 	})
-	reg.Register("update_memory", "Update an existing memory card.", map[string]any{
+	reg.Register("update_memory", "Update an existing memory card. Use to mark memories as stale, change confidence, add tags, or update relations.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"id": map[string]any{"type": "string"},
-			"updates": map[string]any{"type": "object"},
+			"id": map[string]any{"type": "string", "description": "Memory card ID (e.g. 'mem_20260612_001')."},
+			"updates": map[string]any{
+				"type": "object",
+				"description": "Fields to update: status (active|stale|superseded|rejected), confidence (0.0-1.0), tags (string array), relations (object).",
+			},
 		},
+		"required": []string{"id", "updates"},
 	}, func(params map[string]any) (any, error) {
 		id := ""
 		if v, ok := params["id"].(string); ok { id = v }
