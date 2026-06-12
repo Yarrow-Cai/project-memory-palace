@@ -471,6 +471,18 @@ func cmdServeWeb(args []string) int {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"recents": tray.RecentList()})
 	})
+	http.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
+		data, err := os.ReadFile(store.RulesPath(svc.ProjectRoot()))
+		if err != nil { http.Error(w, "rules not found", 404); return }
+		mdPath := store.RulesPath(svc.ProjectRoot())
+		mdPath = mdPath[:len(mdPath)-len(".yaml")] + ".md"
+		mdData, mdErr := os.ReadFile(mdPath)
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]any{"yaml_exists": err == nil}
+		if err == nil { response["yaml"] = string(data) }
+		if mdErr == nil { response["markdown"] = string(mdData) }
+		json.NewEncoder(w).Encode(response)
+	})
 
 	fmt.Fprintf(os.Stderr, "Web UI server starting at http://127.0.0.1:8147\n")
 	fmt.Fprintf(os.Stderr, "Project root: %s\n", projectRoot)

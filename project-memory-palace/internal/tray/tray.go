@@ -203,6 +203,7 @@ func startAPI() {
 	http.HandleFunc("/api/project", handleProject)
 	http.HandleFunc("/api/project/set", handleProjectSet)
 	http.HandleFunc("/api/projects/recent", handleRecents)
+	http.HandleFunc("/api/rules", handleRules)
 	fmt.Fprintln(os.Stderr, "API + SSE server started on 127.0.0.1:8147")
 	if err := http.ListenAndServe("127.0.0.1:8147", nil); err != nil {
 		log.Printf("HTTP server error: %v", err)
@@ -480,6 +481,24 @@ func handleProjectSet(w http.ResponseWriter, r *http.Request) {
 func handleRecents(w http.ResponseWriter, r *http.Request) {
 	mu.Lock(); defer mu.Unlock()
 	json.NewEncoder(w).Encode(map[string]any{"recents": recents})
+}
+
+func handleRules(w http.ResponseWriter, r *http.Request) {
+	mu.Lock(); defer mu.Unlock()
+	data, err := os.ReadFile(store.RulesPath(svc.ProjectRoot()))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"error": "rules not found"})
+		return
+	}
+	mdPath := store.RulesPath(svc.ProjectRoot())
+	mdPath = mdPath[:len(mdPath)-len(".yaml")] + ".md"
+	mdData, mdErr := os.ReadFile(mdPath)
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]any{}
+	if err == nil { response["yaml"] = string(data) }
+	if mdErr == nil { response["markdown"] = string(mdData) }
+	json.NewEncoder(w).Encode(response)
 }
 
 func writeJSON(w http.ResponseWriter, results []map[string]any, err error) {
