@@ -50,6 +50,17 @@ func buildCard(cardID string, payload map[string]any) memory.MemoryCard {
 			card.Confidence = memory.MaxConfidenceNoSource
 		}
 	}
+	// Priority from payload or default 3
+	if pr, ok := payload["priority"]; ok {
+		switch p := pr.(type) {
+		case float64: card.Priority = int(p)
+		case int: card.Priority = p
+		}
+	}
+	// ExpiresAt from payload
+	if exp, ok := payload["expires_at"].(string); ok {
+		card.ExpiresAt = exp
+	}
 	return card
 }
 
@@ -57,7 +68,8 @@ func cardToMap(card *memory.MemoryCard) map[string]any {
 	return map[string]any{
 		"schema_version": card.SchemaVersion,
 		"id": card.ID, "type": card.Type, "status": card.Status,
-		"confidence": card.Confidence, "title": card.Title,
+		"confidence": card.Confidence, "priority": card.Priority,
+		"title": card.Title,
 		"summary": card.Summary, "content": card.Content,
 		"source": map[string]any{
 			"kind": card.Source.Kind, "description": card.Source.Description,
@@ -68,13 +80,14 @@ func cardToMap(card *memory.MemoryCard) map[string]any {
 			"modules": card.Scope.Modules, "paths": card.Scope.Paths,
 		},
 		"tags": card.Tags, "relations": card.Relations,
+		"expires_at": card.ExpiresAt,
 		"created_at": card.CreatedAt, "updated_at": card.UpdatedAt,
 	}
 }
 
 func mapToCard(m map[string]any) *memory.MemoryCard {
 	card := &memory.MemoryCard{
-		SchemaVersion: 1, Relations: make(map[string][]string),
+		SchemaVersion: 1, Relations: make(map[string][]string), Priority: 3,
 	}
 	if v, ok := m["id"].(string); ok { card.ID = v }
 	if v, ok := m["type"].(string); ok { card.Type = v }
@@ -83,6 +96,13 @@ func mapToCard(m map[string]any) *memory.MemoryCard {
 	if v, ok := m["summary"].(string); ok { card.Summary = v }
 	if v, ok := m["content"].(string); ok { card.Content = v }
 	if v, ok := m["confidence"].(float64); ok { card.Confidence = v }
+	if v, ok := m["priority"]; ok {
+		switch p := v.(type) {
+		case float64: card.Priority = int(p)
+		case int: card.Priority = p
+		}
+	}
+	if v, ok := m["expires_at"].(string); ok { card.ExpiresAt = v }
 	if v, ok := m["created_at"].(string); ok { card.CreatedAt = v }
 	if v, ok := m["updated_at"].(string); ok { card.UpdatedAt = v }
 	card.Tags = toStringSlice(m["tags"])

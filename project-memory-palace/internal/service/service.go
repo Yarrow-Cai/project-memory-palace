@@ -2,6 +2,7 @@
 
 import (
 	"fmt"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -73,9 +74,14 @@ func (s *MemoryService) OpenMemory(memoryID string) (map[string]any, error) {
 	return nil, &MemoryNotFoundError{ID: memoryID}
 }
 
-func (s *MemoryService) ListRecent(limit int) ([]map[string]any, error) {
+func (s *MemoryService) ListRecent(limit, offset int, filters map[string]any) ([]map[string]any, error) {
 	if err := s.InitProject(); err != nil { return nil, err }
-	return s.idx.Recent(limit)
+	return s.idx.Recent(limit, offset, filters)
+}
+
+func (s *MemoryService) Count(filters map[string]any) (int, error) {
+	if err := s.InitProject(); err != nil { return 0, err }
+	return s.idx.Count(filters)
 }
 
 func (s *MemoryService) UpdateMemory(memoryID string, updates map[string]any) (map[string]any, error) {
@@ -108,6 +114,9 @@ func (s *MemoryService) UpdateMemory(memoryID string, updates map[string]any) (m
 		}
 		existing["relations"] = cur
 	}
+	if exp, ok := updates["expires_at"].(string); ok {
+		if exp != existing["expires_at"] { changed = true; existing["expires_at"] = exp }
+	}
 	if !changed { return existing, nil }
 	existing["updated_at"] = now()
 	card := mapToCard(existing)
@@ -117,6 +126,39 @@ func (s *MemoryService) UpdateMemory(memoryID string, updates map[string]any) (m
 }
 
 func (s *MemoryService) RebuildIndex() error { return s.idx.Rebuild() }
+
+// DeleteMemory deletes a single memory card (YAML file + SQLite index).
+func (s *MemoryService) DeleteMemory(id string) (map[string]any, error) {
+	// Find the card to get its file path
+	card, err := s.OpenMemory(id)
+	if err != nil { return nil, err }
+	cardObj := mapToCard(card)
+	filename := store.CardFilename(cardObj)
+	if filename == "" { return nil, fmt.Errorf("invalid card ID: %s", id) }
+	filePath := filepath.Join(store.CardsDir(s.projectRoot), filename)
+	// Delete YAML file
+	if err := store.RemoveCard(filePath); err != nil { return nil, fmt.Errorf("remove card: %w", err) }
+	// Delete from index
+	if err := s.idx.Delete(id); err != nil { return nil, fmt.Errorf("delete index: %w", err) }
+	return map[string]any{"deleted": id, "status": "ok"}, nil
+}
+
+// PurgeExpired deletes all memories with status "expired".
+func (s *MemoryService) PurgeExpired() (map[string]any, error) {
+	if err := s.InitProject(); err != nil { return nil, err }
+	ids, err := s.idx.ListExpired()
+	if err != nil { return nil, err }
+	deleted := []string{}
+	failed := []string{}
+	for _, id := range ids {
+		if _, err := s.DeleteMemory(id); err != nil {
+			failed = append(failed, id)
+		} else {
+			deleted = append(deleted, id)
+		}
+	}
+	return map[string]any{"deleted": deleted, "deleted_count": len(deleted), "failed": failed, "status": "ok"}, nil
+}
 
 func (s *MemoryService) SynthesizeRules() (*rule.RulesDocument, error) {
 	return rule.Synthesize(s.projectRoot)

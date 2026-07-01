@@ -26,7 +26,7 @@ body.light {
 html,body{height:100%;overflow:hidden}
 body{font-family:var(--font);font-size:14px;font-weight:400;color:var(--text);background:var(--bg);display:flex;-webkit-font-smoothing:antialiased}
 
-aside{width:340px;min-width:340px;background:var(--panel);border-right:1px solid var(--border);height:100vh;display:flex;flex-direction:column;z-index:10}
+aside{width:340px;min-width:240px;max-width:85vw;background:var(--panel);border-right:1px solid var(--border);height:100vh;display:flex;flex-direction:column;z-index:10}
 .sidebar-header{padding:16px 18px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px}
 .sidebar-header .brand{display:flex;align-items:center;gap:8px}
 .sidebar-header .brand h1{font-size:14px;font-weight:700;letter-spacing:-.01em}
@@ -73,6 +73,7 @@ aside{width:340px;min-width:340px;background:var(--panel);border-right:1px solid
 .status-tag.stale{background:var(--yellow);color:#000}
 .status-tag.superseded{background:var(--grey);color:#fff}
 .status-tag.rejected{background:var(--red);color:#fff}
+.status-tag.expired{background:#4a1a1a;color:#fca5a5;border:1px solid rgba(248,113,113,.3)}
 .conf-mini{display:flex;align-items:center;gap:3px}
 .conf-mini .conf-bar{width:32px;height:3px;background:var(--border2);border-radius:2px;overflow:hidden}
 .conf-mini .conf-fill{height:100%;background:var(--accent);border-radius:2px}
@@ -104,10 +105,12 @@ main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--
 .badge-stale{background:rgba(251,191,36,.15);color:var(--yellow)}
 .badge-superseded{background:rgba(156,163,175,.15);color:var(--grey)}
 .badge-rejected{background:rgba(248,113,113,.15);color:var(--red)}
+.badge-expired{background:rgba(248,113,113,.12);color:#fca5a5}
 body.light .badge-active{background:#d1fae5;color:#065f46}
 body.light .badge-stale{background:#fef3c7;color:#92400e}
 body.light .badge-superseded{background:#f3f4f6;color:#4b5563}
 body.light .badge-rejected{background:#fee2e2;color:#991b1b}
+body.light .badge-expired{background:#fee2e2;color:#991b1b}
 .confidence-row{display:flex;align-items:center;gap:8px}
 .confidence-bar{width:80px;height:5px;background:var(--border2);border-radius:3px;overflow:hidden}
 .confidence-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .4s ease}
@@ -159,6 +162,15 @@ body.light .badge-rejected{background:#fee2e2;color:#991b1b}
 .modal .modal-actions button{padding:6px 16px;border-radius:var(--radius-sm);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);border:1px solid var(--border);background:var(--surface);color:var(--text);transition:all .15s}
 .modal .modal-actions button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
 
+.proj-list{list-style:none;padding:0}
+.proj-list li{display:flex;align-items:center;padding:8px 10px;border-radius:var(--radius-sm);gap:8px;font-size:12px;transition:background .15s;cursor:pointer}
+.proj-list li:hover{background:var(--surface)}
+.proj-list li .proj-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:11px;color:var(--text2)}
+.proj-list li .proj-count{font-size:10px;color:var(--text3);white-space:nowrap}
+.proj-list li .proj-del{background:none;border:none;color:var(--text3);font-size:14px;cursor:pointer;padding:2px 6px;border-radius:4px;transition:all .15s}
+.proj-list li .proj-del:hover{color:var(--red);background:rgba(248,113,113,.1)}
+.proj-list .proj-current{font-size:9px;color:var(--accent);font-weight:600;padding:1px 5px;border:1px solid var(--accent);border-radius:3px;white-space:nowrap}
+
 .skeleton{animation:pulse 1.5s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}}
 
@@ -170,7 +182,13 @@ body.light .badge-rejected{background:#fee2e2;color:#991b1b}
   aside{width:100%;min-width:auto;height:auto;max-height:45vh}
   main .tab-content{padding:16px}
   .detail-header h2{font-size:18px}
+  .resizer{display:none}
 }
+
+/* ===== Resizable divider ===== */
+.resizer{width:5px;cursor:col-resize;background:var(--border);flex-shrink:0;transition:background .15s;position:relative;z-index:20}
+.resizer::after{content:'';position:absolute;inset:-6px -4px}
+.resizer:hover,.resizer.active{background:var(--accent)}
 </style>
 </head>
 <body class="dark">
@@ -181,15 +199,14 @@ body.light .badge-rejected{background:#fee2e2;color:#991b1b}
       <button onclick="toggleTheme()" title="切换主题">🌓</button>
       <button onclick="refreshAll()" title="刷新">↻</button>
       <button onclick="showCreateHelp()" title="新建记忆指南" style="font-size:16px">＋</button>
+      <button onclick="purgeExpired()" title="清理所有过期记忆" style="font-size:12px">🗑</button>
     </div>
   </div>
   <div class="proj-bar">
-    <select id="projSelect" onchange="onProjSelect(this.value)"><option value="">-- 最近项目 --</option></select>
+    <input type="text" id="projInput" placeholder="输入项目路径后按回车…" onkeydown="if(event.key==='Enter')changeProject()">
+    <button class="btn-primary" onclick="handleSwitch()">切换</button>
   </div>
-  <div class="proj-bar" style="border-top:none;padding-top:0">
-    <input type="text" id="projInput" placeholder="输入项目路径..." onkeydown="if(event.key==='Enter')changeProject()">
-    <button class="btn-primary" onclick="changeProject()" style="padding:4px 10px">切换</button>
-  </div>
+  <div style="padding:4px 14px;border-bottom:1px solid var(--border);font-size:10px;text-align:right"><a onclick="showProjMgmt()" style="color:var(--text3);cursor:pointer;text-decoration:none" title="管理项目">📂 管理项目</a></div>
   <div class="search-wrap">
     <span class="search-icon">🔍</span>
     <input type="text" id="searchBox" placeholder="搜索记忆... (/ 键聚焦)" onkeydown="if(event.key==='Enter')doSearch()" oninput="liveSearch()">
@@ -203,6 +220,8 @@ body.light .badge-rejected{background:#fee2e2;color:#991b1b}
     <span id="itemCount"></span>
   </div>
 </aside>
+
+<div class="resizer" id="resizer"></div>
 
 <main>
   <div class="tabs">
@@ -227,6 +246,9 @@ body.light .badge-rejected{background:#fee2e2;color:#991b1b}
   <div class="ctx-item" onclick="markStatus('stale')">⚠ 标记为过时</div>
   <div class="ctx-item" onclick="markStatus('superseded')">◉ 标记为已取代</div>
   <div class="ctx-item" onclick="markStatus('rejected')">✕ 标记为废弃</div>
+  <div class="ctx-item" onclick="markStatus('expired')">⏰ 标记为过期</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="deleteMemory()" style="color:var(--red)">🗑 删除此记忆</div>
 </div>
 
 <div class="modal-overlay" id="createHelp">
@@ -250,6 +272,17 @@ source:
     <div class="modal-actions">
       <button onclick="closeCreateHelp()">知道了</button>
       <button class="primary" onclick="refreshAll();closeCreateHelp()">刷新列表</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="projMgmtModal">
+  <div class="modal">
+    <h3>📂 管理项目</h3>
+    <ul class="proj-list" id="projList" style="list-style:none;padding:0"></ul>
+    <div class="modal-actions">
+      <button onclick="closeProjMgmt()">关闭</button>
+      <button class="primary" onclick="loadProjectList();refreshAll()">刷新</button>
     </div>
   </div>
 </div>
@@ -357,7 +390,7 @@ function renderDetail(d){
   var s=d.status||'active',ci=Math.round((d.confidence||0)*100);
   var h='<div class="detail-header"><h2>'+esc(d.title||'')+'</h2>'+
     '<div class="detail-meta">'+
-    '<span class="badge badge-'+s+'">'+(s==='active'?'有效':s==='stale'?'过时':s==='superseded'?'已取代':'废弃')+'</span>'+
+    '<span class="badge badge-'+s+'">'+(s==='active'?'有效':s==='stale'?'过时':s==='superseded'?'已取代':s==='rejected'?'废弃':s==='expired'?'已过期':'未知')+'</span>'+
     '<span>'+(TYPES[d.type]||esc(d.type||''))+'</span>'+
     '<span class="confidence-row">置信度 <span class="confidence-bar"><span class="confidence-fill" style="width:'+ci+'%"></span></span> '+ci+'%</span>'+
     '<span class="id-badge">'+esc(d.id||'')+'</span></div></div>';
@@ -381,7 +414,9 @@ function renderDetail(d){
     '<button onclick="markStatus(\'stale\')">⚠ 过时</button>'+
     '<button onclick="markStatus(\'superseded\')">◉ 已取代</button>'+
     '<button class="danger" onclick="markStatus(\'rejected\')">✕ 废弃</button>'+
-    '<button onclick="copyID()">📋 复制 ID</button></div>';
+    '<button onclick="markStatus(\'expired\')">⏰ 过期</button>'+
+    '<button onclick="copyID()">📋 复制 ID</button>'+
+    '<button class="danger" onclick="deleteMemory()">🗑 删除</button></div>';
   document.getElementById('tab-content').innerHTML=h;
 }
 
@@ -453,10 +488,10 @@ function loadStats(){
       h+='<div class="stat-card"><div class="stat-num">'+byType[k]+'</div><div class="stat-label">'+esc(TYPES[k]||k)+'</div></div>';
     });
     h+='</div><div style="margin-top:20px"><h3 style="font-size:13px;font-weight:600;color:var(--text3);margin-bottom:10px">状态分布</h3><div class="stats-grid">';
-    ['active','stale','superseded','rejected'].forEach(function(k){
+    ['active','stale','superseded','rejected','expired'].forEach(function(k){
       var c=byStatus[k]||0;
-      var cl=k==='active'?'var(--green)':k==='stale'?'var(--yellow)':k==='superseded'?'var(--grey)':'var(--red)';
-      var lb=k==='active'?'有效':k==='stale'?'过时':k==='superseded'?'已取代':'废弃';
+      var cl=k==='active'?'var(--green)':k==='stale'?'var(--yellow)':k==='superseded'?'var(--grey)':k==='rejected'?'var(--red)':'#fca5a5';
+      var lb=k==='active'?'有效':k==='stale'?'过时':k==='superseded'?'已取代':k==='rejected'?'废弃':'已过期';
       h+='<div class="stat-card"><div class="stat-num" style="color:'+cl+'">'+c+'</div><div class="stat-label">'+lb+'</div></div>';
     });
     h+='</div></div>';
@@ -471,10 +506,30 @@ function copyID(){if(currentID){navigator.clipboard.writeText(currentID);toast('
 function markStatus(s){
   if(!currentID)return;
   api('/api/update?id='+currentID+'&status='+s,{method:'POST'}).then(function(){
-    toast('已更新为 '+(s==='active'?'有效':s==='stale'?'过时':s==='superseded'?'已取代':'废弃'));
+    toast('已更新为 '+(s==='active'?'有效':s==='stale'?'过时':s==='superseded'?'已取代':s==='rejected'?'废弃':s==='expired'?'已过期':'未知'));
     showDetail(currentID);loadRecent();
   }).catch(function(){toast('更新失败')});
   hideCtx();
+}
+
+function deleteMemory(){
+  if(!currentID)return;
+  if(!confirm('确定要永久删除记忆 '+currentID+' 吗？此操作不可撤销。'))return;
+  api('/api/delete?id='+currentID,{method:'POST'}).then(function(){
+    toast('已删除: '+currentID);
+    currentID=null;loadRecent();
+    document.getElementById('tab-content').innerHTML='<div class="detail-empty"><span class="empty-icon">🗑</span><span class="empty-text">记忆已删除</span></div>';
+  }).catch(function(){toast('删除失败')});
+  hideCtx();
+}
+
+function purgeExpired(){
+  if(!confirm('确定要清理所有标记为"过期"的记忆吗？此操作不可撤销。'))return;
+  api('/api/purge',{method:'POST'}).then(function(d){
+    var n=(d.deleted_count||0);
+    toast('已清理 '+n+' 条过期记忆');
+    loadRecent();
+  }).catch(function(){toast('清理失败')});
 }
 
 // ===== Theme =====
@@ -484,24 +539,68 @@ function toggleTheme(){
 }
 
 // ===== Project =====
-function loadRecents(){
-  api('/api/project').then(function(d){
-    var s=document.getElementById('projSelect');
-    s.innerHTML='<option value="">-- 最近项目 --</option>';
-    if(d.recents)d.recents.forEach(function(r){s.innerHTML+='<option value="'+r+'">'+shortPath(r)+'</option>'});
-    document.getElementById('projInput').value=d.root||'';
-  });
-}
-function onProjSelect(v){if(v){document.getElementById('projInput').value=v;changeProjectDirect(v)}}
-function changeProjectDirect(p){
-  api('/api/project/set?root='+encodeURIComponent(p)).then(function(){loadRecents();loadRecent()});
-}
 function changeProject(){
   var p=document.getElementById('projInput').value.trim();
   if(!p)return;
+  doChangeProject(p);
+}
+function doChangeProject(p){
   api('/api/project/set?root='+encodeURIComponent(p)).then(function(d){
-    loadRecents();loadRecent();toast('已切换到: '+shortPath(d.root));
+    toast('已切换到: '+shortPath(d.root||p));
+    loadRecent();
   }).catch(function(){toast('切换失败')});
+}
+function handleSwitch(){
+  var p=document.getElementById('projInput').value.trim();
+  if(p){ doChangeProject(p); }
+  else { showProjMgmt(); }
+}
+
+// ===== Project Management Modal =====
+function showProjMgmt(){
+  document.getElementById('projMgmtModal').classList.add('show');
+  loadProjectList();
+}
+function closeProjMgmt(){
+  document.getElementById('projMgmtModal').classList.remove('show');
+}
+function loadProjectList(){
+  api('/api/project').then(function(d){
+    var root=d.root||'';
+    var recents=d.recents||[];
+    var ul=document.getElementById('projList');
+    if(!recents.length){
+      ul.innerHTML='<li style="color:var(--text3);font-size:12px;padding:12px;cursor:default">暂无最近项目</li>';
+      return;
+    }
+    ul.innerHTML=recents.map(function(r){
+      var path=r.path||r;
+      var count=r.count||'?';
+      var isCurrent=(path===root);
+      return '<li onclick="switchToProject(\''+escAttr(path)+'\')">'+
+        '<span class="proj-path" title="'+escAttr(path)+'">'+esc(shortPath(path))+'</span>'+
+        '<span class="proj-count">'+count+' 条</span>'+
+        (isCurrent?'<span class="proj-current">当前</span>':'')+
+        '<button class="proj-del" title="删除" onclick="event.stopPropagation();removeProject(\''+escAttr(path)+'\')">✕</button>'+
+        '</li>';
+    }).join('');
+  }).catch(function(){
+    document.getElementById('projList').innerHTML='<li style="color:var(--red);font-size:12px;padding:12px;cursor:default">加载失败</li>';
+  });
+}
+function switchToProject(path){
+  document.getElementById('projInput').value=path;
+  doChangeProject(path);
+  closeProjMgmt();
+}
+function removeProject(path){
+  if(!confirm('确定要删除项目 '+shortPath(path)+' 吗？'))return;
+  api('/api/project/remove?root='+encodeURIComponent(path),{method:'POST'}).then(function(d){
+    if(d.error){ toast('删除失败: '+d.error); return; }
+    toast('已删除项目');
+    loadProjectList();
+    loadRecent();
+  }).catch(function(){toast('删除失败')});
 }
 
 // ===== Create Help Modal =====
@@ -540,11 +639,14 @@ function toast(msg){
 function esc(s){
   var d=document.createElement('div');d.textContent=s||'';return d.innerHTML;
 }
+function escAttr(s){
+  return String(s||'').replace(/\\/g,'\\\\').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
 // ===== Events =====
-document.addEventListener('click',function(e){if(!e.target.closest('#ctxMenu'))hideCtx()});
+document.addEventListener('click',function(e){if(!e.target.closest('#ctxMenu'))hideCtx();if(e.target.closest('#projMgmtModal')&&!e.target.closest('.modal'))closeProjMgmt()});
 document.addEventListener('keydown',function(e){
-  if(e.key==='Escape'){hideCtx();closeCreateHelp();document.getElementById('searchBox').blur()}
+  if(e.key==='Escape'){hideCtx();closeCreateHelp();closeProjMgmt();document.getElementById('searchBox').blur()}
   if(e.key==='/'&&!e.ctrlKey&&!e.metaKey&&document.activeElement.tagName!=='INPUT'&&document.activeElement.tagName!=='TEXTAREA'){
     e.preventDefault();document.getElementById('searchBox').focus();
   }
@@ -562,6 +664,37 @@ document.addEventListener('keydown',function(e){
     if(sel)sel.scrollIntoView({block:'nearest',behavior:'smooth'});
   }
 });
+
+// ===== Resizable divider =====
+(function(){
+  var aside=document.querySelector('aside');
+  var resizer=document.getElementById('resizer');
+  var startX,startW;
+  resizer.addEventListener('mousedown',function(e){
+    startX=e.clientX;
+    startW=aside.getBoundingClientRect().width;
+    resizer.classList.add('active');
+    document.body.style.cursor='col-resize';
+    document.body.style.userSelect='none';
+    function onMove(e){
+      var w=startW+(e.clientX-startX);
+      w=Math.max(240,Math.min(w,window.innerWidth*0.85));
+      aside.style.width=w+'px';
+    }
+    function onUp(){
+      resizer.classList.remove('active');
+      document.body.style.cursor='';
+      document.body.style.userSelect='';
+      document.removeEventListener('mousemove',onMove);
+      document.removeEventListener('mouseup',onUp);
+      localStorage.setItem('pmem-sidebar-width',aside.style.width);
+    }
+    document.addEventListener('mousemove',onMove);
+    document.addEventListener('mouseup',onUp);
+  });
+  var saved=localStorage.getItem('pmem-sidebar-width');
+  if(saved) aside.style.width=saved;
+})();
 
 // ===== Init =====
 loadRecents();loadRecent();

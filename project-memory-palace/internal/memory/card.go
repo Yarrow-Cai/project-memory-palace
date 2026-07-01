@@ -32,6 +32,8 @@ type MemoryCard struct {
 	Scope         ScopeInfo           `yaml:"scope" json:"scope"`
 	Tags          []string            `yaml:"tags" json:"tags"`
 	Relations     map[string][]string `yaml:"relations" json:"relations"`
+	Priority      int                 `yaml:"priority" json:"priority"` // 1-5, default 3
+	ExpiresAt     string              `yaml:"expires_at" json:"expires_at"` // ISO timestamp, empty = never expires
 	CreatedAt     string              `yaml:"created_at" json:"created_at"`
 	UpdatedAt     string              `yaml:"updated_at" json:"updated_at"`
 }
@@ -43,6 +45,7 @@ func NewCard(cardType, title, summary, content string, confidence float64) Memor
 		Type:          cardType,
 		Status:        "active",
 		Confidence:    confidence,
+		Priority:      3,
 		Title:         title,
 		Summary:       summary,
 		Content:       content,

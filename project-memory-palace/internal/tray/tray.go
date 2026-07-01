@@ -1,4 +1,4 @@
-﻿package tray
+package tray
 
 import (
 	"encoding/json"
@@ -115,6 +115,23 @@ func RecentList() []string {
 	return out
 }
 
+// RemoveRecent removes a project root from the recents list and persists.
+func RemoveRecent(root string) {
+	mu.Lock()
+	defer mu.Unlock()
+	root = filepath.Clean(root)
+	var filtered []string
+	for _, r := range recents {
+		if r != root {
+			filtered = append(filtered, r)
+		}
+	}
+	recents = filtered
+	data, _ := json.Marshal(recents)
+	os.MkdirAll(filepath.Dir(recentsPath), 0700)
+	os.WriteFile(recentsPath, data, 0644)
+}
+
 func Run(root string) {
 	projectRoot = root
 	svc = service.New(projectRoot)
@@ -202,8 +219,11 @@ func startAPI() {
 	http.HandleFunc("/api/update", handleUpdate)
 	http.HandleFunc("/api/project", handleProject)
 	http.HandleFunc("/api/project/set", handleProjectSet)
+	http.HandleFunc("/api/project/remove", handleProjectRemove)
 	http.HandleFunc("/api/projects/recent", handleRecents)
 	http.HandleFunc("/api/rules", handleRules)
+	http.HandleFunc("/api/count", handleCount)
+	http.HandleFunc("/api/disclosure", handleDisclosure)
 	fmt.Fprintln(os.Stderr, "API + SSE server started on 127.0.0.1:8147")
 	if err := http.ListenAndServe("127.0.0.1:8147", nil); err != nil {
 		log.Printf("HTTP server error: %v", err)
@@ -225,7 +245,7 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 				result["rules"] = doc["rules"]
 			}
 		}
-		recent, _ := svc.ListRecent(5)
+		recent, _ := svc.ListRecent(5, 0, nil)
 		result["recent"] = recent
 		result["next"] = []string{
 			"1. recall query=<keyword> - search project memory by topic or file path",
@@ -264,11 +284,11 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 						"minimum": float64(0),
 						"maximum": float64(1),
 					},
-					"status": map[string]any{
-						"type": "string",
-						"description": "Memory status (default: active)",
-						"enum": []string{"active", "stale", "superseded", "rejected"},
-					},
+				"status": map[string]any{
+					"type": "string",
+					"description": "Memory status (default: active)",
+					"enum": []string{"active", "stale", "superseded", "rejected", "expired"},
+				},
 					"tags": map[string]any{
 						"type": "array",
 						"items": map[string]any{"type": "string"},
@@ -356,13 +376,13 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 		return svc.OpenMemory(id)
 	})
 
-	reg.Register("update_memory", "Update an existing memory card. Use to mark memories as stale, change confidence, add tags, or update relations.", map[string]any{
+	reg.Register("update_memory", "Update an existing memory card. Use to mark memories as stale, change confidence, add tags, update relations, or set expires_at.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"id": map[string]any{"type": "string", "description": "Memory card ID (e.g. 'mem_20260612_001')."},
 			"updates": map[string]any{
 				"type": "object",
-				"description": "Fields to update: status, confidence, tags, relations.",
+				"description": "Fields to update: status, confidence, tags, relations, expires_at.",
 			},
 		},
 		"required": []string{"id", "updates"},
@@ -373,6 +393,18 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 		mu.Lock(); defer mu.Unlock()
 		return svc.UpdateMemory(id, updates)
 	})
+	reg.Register("delete_memory", "Delete a single memory card permanently. Removes both the YAML file and the SQLite index entry.", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id": map[string]any{"type": "string", "description": "Memory card ID to delete (e.g. 'mem_20260612_001')."},
+		},
+		"required": []string{"id"},
+	}, func(params map[string]any) (any, error) {
+		id := getStr(params, "id")
+		if id == "" { return nil, fmt.Errorf("id parameter required") }
+		mu.Lock(); defer mu.Unlock()
+		return svc.DeleteMemory(id)
+	})
 
 	reg.Register("list_recent", "List recently created or updated memories.", map[string]any{
 		"type": "object",
@@ -382,7 +414,7 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 	}, func(params map[string]any) (any, error) {
 		limit := getInt(params, "limit", 10)
 		mu.Lock(); defer mu.Unlock()
-		results, err := svc.ListRecent(limit)
+		results, err := svc.ListRecent(limit, 0, nil)
 		if err != nil { return nil, err }
 		return map[string]any{"results": results}, nil
 	})
@@ -410,6 +442,54 @@ func registerMCPTools(reg *mcp.ToolRegistry) {
 		}, nil
 	})
 
+	reg.Register("disclosure", "渐进披露项目记忆。first模式返回高优先级(>=3)全貌；subsequent模式返回核心(>=5)+近期变更。减少上下文占用。", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"mode": map[string]any{
+				"type":        "string",
+				"description": "Disclosure mode: 'first' or 'subsequent'",
+				"enum":        []string{"first", "subsequent"},
+			},
+			"since": map[string]any{
+				"type":        "string",
+				"description": "ISO timestamp (required for subsequent mode)",
+			},
+		},
+		"required": []string{"mode"},
+	}, func(params map[string]any) (any, error) {
+		mode := getStr(params, "mode")
+		since := getStr(params, "since")
+		mu.Lock(); defer mu.Unlock()
+		var results []map[string]any
+		switch mode {
+		case "first":
+			r, err := svc.ListRecent(20, 0, map[string]any{"status": "active", "priority": 3})
+			if err != nil { return nil, err }
+			results = r
+		case "subsequent":
+			highPri, e1 := svc.ListRecent(15, 0, map[string]any{"status": "active", "priority": 5})
+			recent, e2 := svc.ListRecent(15, 0, map[string]any{"status": "active"})
+			if e1 != nil { return nil, e1 }
+			if e2 != nil { return nil, e2 }
+			seen := map[string]bool{}
+			for _, r := range highPri {
+				seen[r["id"].(string)] = true
+				results = append(results, r)
+			}
+			for _, r := range recent {
+				if !seen[r["id"].(string)] {
+					if since == "" || (r["updated_at"] != nil && fmt.Sprint(r["updated_at"]) > since) {
+						results = append(results, r)
+					}
+				}
+			}
+			if len(results) > 15 { results = results[:15] }
+		default:
+			return nil, fmt.Errorf("mode must be 'first' or 'subsequent'")
+		}
+		return map[string]any{"mode": mode, "results": results}, nil
+	})
+
 }
 
 func getStr(params map[string]any, key string) string {
@@ -425,15 +505,28 @@ func getInt(params map[string]any, key string, def int) int {
 	}
 }
 
+func parseIntParam(s string, defaultVal int) int {
+	if s == "" { return defaultVal }
+	n := 0
+	for _, c := range s { if c < '0' || c > '9' { return defaultVal }; n = n*10 + int(c-'0') }
+	return n
+}
+
 func serveIndex(w http.ResponseWriter, r *http.Request) {
-	html := strings.ReplaceAll(indexHTML, "{{.ProjectRoot}}", projectRoot)
+	html := RenderIndex(projectRoot)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(html))
 }
 
 func handleRecent(w http.ResponseWriter, r *http.Request) {
 	mu.Lock(); defer mu.Unlock()
-	results, err := svc.ListRecent(50)
+	limit := parseIntParam(r.URL.Query().Get("limit"), 20)
+	offset := parseIntParam(r.URL.Query().Get("offset"), 0)
+	filters := map[string]any{}
+	if t := r.URL.Query().Get("type"); t != "" { filters["type"] = t }
+	if s := r.URL.Query().Get("status"); s != "" { filters["status"] = s }
+	if p := parseIntParam(r.URL.Query().Get("priority"), 0); p > 0 { filters["priority"] = p }
+	results, err := svc.ListRecent(limit, offset, filters)
 	writeJSON(w, results, err)
 }
 
@@ -453,7 +546,10 @@ func handleOpen(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleUpdate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" { http.Error(w, "POST required", 405); return }
+	if r.Method != "POST" {
+		writeJSONRaw(w, nil, fmt.Errorf("POST required"))
+		return
+	}
 	mu.Lock(); defer mu.Unlock()
 	id := r.URL.Query().Get("id")
 	status := r.URL.Query().Get("status")
@@ -463,19 +559,53 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 func handleProject(w http.ResponseWriter, r *http.Request) {
 	mu.Lock(); defer mu.Unlock()
-	json.NewEncoder(w).Encode(map[string]any{"root": projectRoot, "recents": recents})
+	writeJSONRaw(w, map[string]any{"root": projectRoot, "recents": recents}, nil)
 }
 
 func handleProjectSet(w http.ResponseWriter, r *http.Request) {
 	newRoot := r.URL.Query().Get("root")
-	if newRoot == "" { http.Error(w, "root parameter required", 400); return }
+	if newRoot == "" {
+		writeJSONRaw(w, nil, fmt.Errorf("root parameter required"))
+		return
+	}
 	mu.Lock()
 	svc = service.New(newRoot)
 	svc.InitProject()
 	projectRoot = newRoot
 	saveRecents()
 	mu.Unlock()
-	json.NewEncoder(w).Encode(map[string]any{"root": projectRoot, "recents": recents})
+	writeJSONRaw(w, map[string]any{"root": projectRoot, "recents": recents}, nil)
+}
+
+func handleProjectRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeJSONRaw(w, nil, fmt.Errorf("POST required"))
+		return
+	}
+	root := r.URL.Query().Get("root")
+	if root == "" {
+		writeJSONRaw(w, nil, fmt.Errorf("root parameter required"))
+		return
+	}
+	RemoveRecent(root)
+	// 真正删除项目的 .project-memory/ 数据目录
+	memDir := store.MemoryDir(root)
+	os.RemoveAll(memDir)
+	writeJSONRaw(w, map[string]any{"removed": root, "recents": recents}, nil)
+}
+
+func handleCount(w http.ResponseWriter, r *http.Request) {
+	mu.Lock(); defer mu.Unlock()
+	filters := map[string]any{}
+	if t := r.URL.Query().Get("type"); t != "" { filters["type"] = t }
+	if s := r.URL.Query().Get("status"); s != "" { filters["status"] = s }
+	if p := parseIntParam(r.URL.Query().Get("priority"), 0); p > 0 { filters["priority"] = p }
+	count, err := svc.Count(filters)
+	if err != nil {
+		writeJSONRaw(w, nil, err)
+		return
+	}
+	writeJSONRaw(w, map[string]any{"count": count}, nil)
 }
 
 func handleRecents(w http.ResponseWriter, r *http.Request) {
@@ -501,6 +631,40 @@ func handleRules(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+func handleDisclosure(w http.ResponseWriter, r *http.Request) {
+	mu.Lock(); defer mu.Unlock()
+	mode := r.URL.Query().Get("mode")
+	since := r.URL.Query().Get("since")
+	var results []map[string]any
+	var err error
+	switch mode {
+	case "first":
+		results, err = svc.ListRecent(20, 0, map[string]any{"status": "active", "priority": 3})
+	case "subsequent":
+		highPri, e1 := svc.ListRecent(15, 0, map[string]any{"status": "active", "priority": 5})
+		recent, e2 := svc.ListRecent(15, 0, map[string]any{"status": "active"})
+		if e1 != nil { err = e1 }
+		if e2 != nil { err = e2 }
+		seen := map[string]bool{}
+		for _, r := range highPri {
+			seen[r["id"].(string)] = true
+			results = append(results, r)
+		}
+		for _, r := range recent {
+			if !seen[r["id"].(string)] {
+				if since == "" || (r["updated_at"] != nil && fmt.Sprint(r["updated_at"]) > since) {
+					results = append(results, r)
+				}
+			}
+		}
+		if len(results) > 15 { results = results[:15] }
+	default:
+		writeJSONRaw(w, nil, fmt.Errorf("mode must be 'first' or 'subsequent'"))
+		return
+	}
+	writeJSON(w, results, err)
+}
+
 func writeJSON(w http.ResponseWriter, results []map[string]any, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil { json.NewEncoder(w).Encode(map[string]any{"error": err.Error()}); return }
@@ -521,5 +685,15 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // RenderIndex substitutes the project root into the embedded index.html template.
 func RenderIndex(root string) string {
+	// Try filesystem first for dev, fall back to embedded
+	exe, _ := os.Executable()
+	for _, p := range []string{
+		filepath.Join(filepath.Dir(exe), "..", "web", "index.html"),
+		"web/index.html",
+	} {
+		if b, err := os.ReadFile(p); err == nil && len(b) > 100 {
+			return strings.ReplaceAll(string(b), "{{.ProjectRoot}}", root)
+		}
+	}
 	return strings.ReplaceAll(indexHTML, "{{.ProjectRoot}}", root)
 }

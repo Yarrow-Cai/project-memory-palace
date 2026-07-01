@@ -21,8 +21,10 @@ const schemaDDL = `
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL,
     title TEXT NOT NULL, summary TEXT NOT NULL, source_kind TEXT NOT NULL,
-    confidence REAL NOT NULL, tags_json TEXT NOT NULL, modules_json TEXT NOT NULL,
-    paths_json TEXT NOT NULL, updated_at TEXT NOT NULL
+    confidence REAL NOT NULL, priority INTEGER NOT NULL DEFAULT 3,
+    tags_json TEXT NOT NULL, modules_json TEXT NOT NULL,
+    paths_json TEXT NOT NULL, expires_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
     id UNINDEXED, title, summary, content, tags, modules, paths, tokenize='unicode61'
@@ -116,7 +118,12 @@ func (idx *MemoryIndex) Initialize() error {
 	db, err := idx.connect()
 	if err != nil { return err }
 	_, err = db.Exec(schemaDDL)
-	return err
+	if err != nil { return err }
+	// Migration: add priority column if missing (added in schema v2)
+	db.Exec("ALTER TABLE memories ADD COLUMN priority INTEGER NOT NULL DEFAULT 3")
+	// Migration: add expires_at column if missing (added in schema v3)
+	db.Exec("ALTER TABLE memories ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''")
+	return nil
 }
 
 func (idx *MemoryIndex) Clear() error {
@@ -143,14 +150,18 @@ func (idx *MemoryIndex) Upsert(card *memory.MemoryCard) error {
 }
 
 func doUpsert(tx *sql.Tx, card *memory.MemoryCard) error {
+	// Default priority for legacy cards
+	if card.Priority < 1 || card.Priority > 5 {
+		card.Priority = 3
+	}
 	tagsJSON, err := json.Marshal(card.Tags)
 	if err != nil { return fmt.Errorf("marshal tags: %w", err) }
 	modsJSON, err := json.Marshal(card.Scope.Modules)
 	if err != nil { return fmt.Errorf("marshal modules: %w", err) }
 	pathsJSON, err := json.Marshal(card.Scope.Paths)
 	if err != nil { return fmt.Errorf("marshal paths: %w", err) }
-	q := `INSERT INTO memories(id,type,status,title,summary,source_kind,confidence,tags_json,modules_json,paths_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET type=excluded.type,status=excluded.status,title=excluded.title,summary=excluded.summary,source_kind=excluded.source_kind,confidence=excluded.confidence,tags_json=excluded.tags_json,modules_json=excluded.modules_json,paths_json=excluded.paths_json,updated_at=excluded.updated_at`
-	_, err = tx.Exec(q, card.ID, card.Type, card.Status, card.Title, card.Summary, card.Source.Kind, card.Confidence, string(tagsJSON), string(modsJSON), string(pathsJSON), card.UpdatedAt)
+	q := `INSERT INTO memories(id,type,status,title,summary,source_kind,confidence,priority,tags_json,modules_json,paths_json,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET type=excluded.type,status=excluded.status,title=excluded.title,summary=excluded.summary,source_kind=excluded.source_kind,confidence=excluded.confidence,priority=excluded.priority,tags_json=excluded.tags_json,modules_json=excluded.modules_json,paths_json=excluded.paths_json,expires_at=excluded.expires_at,updated_at=excluded.updated_at`
+	_, err = tx.Exec(q, card.ID, card.Type, card.Status, card.Title, card.Summary, card.Source.Kind, card.Confidence, card.Priority, string(tagsJSON), string(modsJSON), string(pathsJSON), card.ExpiresAt, card.UpdatedAt)
 	if err != nil { return fmt.Errorf("upsert: %w", err) }
 	if _, err := tx.Exec("DELETE FROM memory_fts WHERE id=?", card.ID); err != nil { return fmt.Errorf("upsert fts delete: %w", err) }
 	if _, err := tx.Exec("INSERT INTO memory_fts(id,title,summary,content,tags,modules,paths) VALUES(?,?,?,?,?,?,?)", card.ID, ftsPreprocess(card.Title), ftsPreprocess(card.Summary), ftsPreprocess(card.Content), ftsPreprocess(strings.Join(card.Tags," ")), ftsPreprocess(strings.Join(card.Scope.Modules," ")), ftsPreprocess(strings.Join(card.Scope.Paths," "))); err != nil { return fmt.Errorf("upsert fts insert: %w", err) }
@@ -165,6 +176,38 @@ func doUpsert(tx *sql.Tx, card *memory.MemoryCard) error {
 		}
 	}
 	return nil
+}
+
+// Delete removes a single memory card from the index (all related tables).
+func (idx *MemoryIndex) Delete(id string) error {
+	db, err := idx.connect()
+	if err != nil { return err }
+	if err := idx.Initialize(); err != nil { return err }
+	tx, err := db.Begin()
+	if err != nil { return fmt.Errorf("delete begin: %w", err) }
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM memory_paths WHERE memory_id=?", id); err != nil { return fmt.Errorf("delete paths: %w", err) }
+	if _, err := tx.Exec("DELETE FROM relations WHERE source_id=? OR target_id=?", id, id); err != nil { return fmt.Errorf("delete relations: %w", err) }
+	if _, err := tx.Exec("DELETE FROM memory_fts WHERE id=?", id); err != nil { return fmt.Errorf("delete fts: %w", err) }
+	if _, err := tx.Exec("DELETE FROM memories WHERE id=?", id); err != nil { return fmt.Errorf("delete memory: %w", err) }
+	return tx.Commit()
+}
+
+// ListExpired returns memory IDs whose status is 'expired' — for purge.
+func (idx *MemoryIndex) ListExpired() ([]string, error) {
+	if err := idx.Initialize(); err != nil { return nil, err }
+	db, err := idx.connect()
+	if err != nil { return nil, err }
+	rows, err := db.Query("SELECT id FROM memories WHERE status='expired' ORDER BY updated_at DESC")
+	if err != nil { return nil, fmt.Errorf("list expired: %w", err) }
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil { return nil, err }
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (idx *MemoryIndex) Search(query string, filters map[string]any, limit int) ([]map[string]any, error) {
@@ -213,21 +256,75 @@ func (idx *MemoryIndex) Search(query string, filters map[string]any, limit int) 
 	return results, rows.Err()
 }
 
-func (idx *MemoryIndex) Recent(limit int) ([]map[string]any, error) {
+func (idx *MemoryIndex) Recent(limit, offset int, filters map[string]any) ([]map[string]any, error) {
 	if err := idx.Initialize(); err != nil { return nil, err }
 	db, err := idx.connect()
 	if err != nil { return nil, err }
-	rows, err := db.Query("SELECT id,type,status,title,summary,source_kind,confidence,updated_at FROM memories ORDER BY updated_at DESC LIMIT ?", limit)
+	if limit <= 0 { limit = 20 }
+
+	where := ""
+	args := []any{}
+	hasStatusFilter := false
+	if filters != nil {
+		if tp, ok := filters["type"].(string); ok && tp != "" {
+			where += " AND type = ?"
+			args = append(args, tp)
+		}
+		if st, ok := filters["status"].(string); ok && st != "" {
+			where += " AND status = ?"
+			args = append(args, st)
+			hasStatusFilter = true
+		}
+		if pr, ok := filters["priority"].(int); ok && pr > 0 {
+			where += " AND priority >= ?"
+			args = append(args, pr)
+		}
+	}
+	// Default: exclude expired unless explicitly requested
+	if !hasStatusFilter {
+		where += " AND status != 'expired'"
+	}
+	query := "SELECT id,type,status,priority,title,summary,source_kind,confidence,updated_at FROM memories WHERE 1=1" + where + " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+	rows, err := db.Query(query, args...)
 	if err != nil { return nil, fmt.Errorf("recent: %w", err) }
 	defer rows.Close()
 	var results []map[string]any
 	for rows.Next() {
 		var id, tp, st, title, summary, sk, upd string
+		var priority int
 		var conf float64
-		rows.Scan(&id,&tp,&st,&title,&summary,&sk,&conf,&upd)
-		results = append(results, map[string]any{"id":id,"type":tp,"status":st,"title":title,"summary":summary,"confidence":conf,"source_hint":sk,"matched_by":[]string{"recent"},"updated_at":upd})
+		rows.Scan(&id,&tp,&st,&priority,&title,&summary,&sk,&conf,&upd)
+		results = append(results, map[string]any{"id":id,"type":tp,"status":st,"priority":priority,"title":title,"summary":summary,"confidence":conf,"source_hint":sk,"matched_by":[]string{"recent"},"updated_at":upd})
 	}
 	return results, rows.Err()
+}
+
+func (idx *MemoryIndex) Count(filters map[string]any) (int, error) {
+	if err := idx.Initialize(); err != nil { return 0, err }
+	db, err := idx.connect()
+	if err != nil { return 0, err }
+
+	where := ""
+	args := []any{}
+	if filters != nil {
+		if tp, ok := filters["type"].(string); ok && tp != "" {
+			where += " AND type = ?"
+			args = append(args, tp)
+		}
+		if st, ok := filters["status"].(string); ok && st != "" {
+			where += " AND status = ?"
+			args = append(args, st)
+		}
+		if pr, ok := filters["priority"].(int); ok && pr > 0 {
+			where += " AND priority >= ?"
+			args = append(args, pr)
+		}
+	}
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM memories WHERE 1=1"+where, args...).Scan(&count)
+	if err != nil { return 0, fmt.Errorf("count: %w", err) }
+	return count, nil
 }
 
 func (idx *MemoryIndex) Rebuild() error {
