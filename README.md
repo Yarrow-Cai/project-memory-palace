@@ -66,6 +66,8 @@ codex mcp add project-memory-palace -- "%USERPROFILE%\.pmem\bin\pmem.exe" serve-
 | `pmem open <id>` | 查看完整卡片 |
 | `pmem recent --limit 20` | 最近记忆列表 |
 | `pmem update --status stale <id>` | 更新状态 |
+| `pmem delete <id>` | 永久删除单条记忆 |
+| `pmem purge` | 批量清理所有已过期记忆 |
 | `pmem rebuild-index` | 重建索引 |
 | `pmem audit` | 审计记忆健康度 |
 | `pmem serve-web` | Web UI（http://127.0.0.1:8147） |
@@ -81,10 +83,34 @@ codex mcp add project-memory-palace -- "%USERPROFILE%\.pmem\bin\pmem.exe" serve-
 | `remember` | 写入记忆（type, title, summary, content...） |
 | `recall` | 关键词搜索（返回摘要） |
 | `open_memory` | 按 ID 获取完整内容 |
-| `update_memory` | 更新状态/置信度/标签/关联 |
+| `update_memory` | 更新状态/置信度/过期时间/标签/关联 |
+| `delete_memory` | 永久删除单条记忆（同时清理 YAML + 索引） |
 | `list_recent` | 最近记忆 |
 | `synthesize_rules` | 生成 agent-rules.yaml |
 | `disclosure` | 渐进披露（first/subsequent 模式） |
+
+---
+
+## 记忆生命周期
+
+每条记忆卡片有完整的状态流转：
+
+```
+active → stale / superseded / rejected → expired → 🗑️ 删除
+```
+
+| 状态 | 含义 | 操作 |
+|------|------|------|
+| `active` | 活跃，正常参与搜索和披露 | `remember` 默认状态 |
+| `stale` | 信息过时但仍可参考 | `update_memory({status:"stale"})` |
+| `superseded` | 被新卡片取代，保留供回溯 | 设置 `relations.supersedes` |
+| `rejected` | 经过讨论被否定 | `update_memory({status:"rejected"})` |
+| `expired` | 已过期，不再参与搜索 | 设置 `expires_at` 自动到期，或手动设 |
+
+- 设置 `expires_at`（ISO 时间戳），到期后自动视为过期
+- `pmem purge` / Web UI 批量清理所有 `expired` 卡片
+- `delete_memory` / `pmem delete` 永久删除（含 YAML 文件和索引）
+- `recall` / `disclosure` 默认排除 `expired` 状态
 
 ---
 
@@ -102,14 +128,18 @@ pmem serve-web
 ## 记忆卡片格式
 
 ```yaml
-type: decision              # project_goal | design | decision | change_reason
-                            # bugfix | module | convention | open_question
+type: decision              # 20 种类型：convention, decision, architecture, schematic, pinout,
+                            # power, clock, driver, register, peripheral, dma, protocol,
+                            # timing, interrupt, state_machine, change_reason, knowledge,
+                            # insight, pattern, trick, bug
 title: 选择 FreeRTOS 作为调度核心
 summary: 因为任务间同步需求，决定使用 FreeRTOS 替代裸机循环
 content: >
   经过对比，FreeRTOS 的任务隔离和信号量机制更适合逆变器控制...
 confidence: 0.85
 status: active
+priority: 4                 # 1-5，决定是否参与渐进披露
+expires_at: ""              # ISO 时间戳，空 = 永不过期
 tags: [rtos, freertos, architecture]
 source:
   kind: analysis
