@@ -206,7 +206,8 @@ func toggleMCP(si, bi *systray.MenuItem) {
 
 func startAPI() {
 	reg := mcp.NewToolRegistry()
-	service.RegisterAllTools(reg, svc, projectRoot, func(h mcp.ToolHandler) mcp.ToolHandler {
+	ws, _ := service.NewSingleProject(projectRoot)
+	service.RegisterAllTools(reg, ws, func(h mcp.ToolHandler) mcp.ToolHandler {
 		return func(params map[string]any) (any, error) {
 			mu.Lock()
 			defer mu.Unlock()

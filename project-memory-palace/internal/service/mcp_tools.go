@@ -14,7 +14,7 @@ import (
 // RegisterAllTools registers all MCP tools with the provided registry.
 // Each handler is optionally wrapped with wrapHandler (tray layer uses this
 // to inject mu.Lock()/defer mu.Unlock() around every handler call).
-func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot string, wrapHandler func(mcp.ToolHandler) mcp.ToolHandler) {
+func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler func(mcp.ToolHandler) mcp.ToolHandler) {
 	wrap := func(h mcp.ToolHandler) mcp.ToolHandler {
 		if wrapHandler != nil {
 			return wrapHandler(h)
@@ -25,15 +25,22 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 	typeEnum := memory.SortedKeys(memory.MemoryTypes)
 	statusEnum := memory.SortedKeys(memory.MemoryStatuses)
 	sourceKindEnum := memory.SortedKeys(memory.SourceKinds)
+	projectProp := map[string]any{
+		"type":        "string",
+		"description": "目标工程名称。不填则使用默认工程（第一个发现的工程）。可用 list_projects 查看所有可用工程。",
+	}
 
 	// 1. init_project
-	reg.Register("init_project", "Initialize Project Memory Palace for this project. Call this FIRST — returns project context (active rules, recent activity, next-step guide) in one shot. Creates .project-memory/ directory tree. Safe to call repeatedly (idempotent).", map[string]any{
-		"type": "object", "properties": map[string]any{},
+	reg.Register("init_project", "Initialize Project Memory Palace for this project. Call this FIRST — returns project context (active rules, recent activity, next-step guide) in one shot. Creates .project-memory/ directory tree. Safe to call repeatedly (idempotent).", map[string]any{"type": "object", "properties": map[string]any{
+		"project": projectProp,
+	},
 	}, wrap(func(params map[string]any) (any, error) {
+	svc, _, err := ws.resolve(extractProject(params))
+	if err != nil { return nil, err }
 		if err := svc.InitProject(); err != nil {
 			return nil, err
 		}
-		result := map[string]any{"status": "initialized", "project_root": projectRoot}
+		result := map[string]any{"status": "initialized", "project_root": svc.ProjectRoot()}
 		// Include active rules inline
 		data, err := os.ReadFile(store.RulesPath(svc.ProjectRoot()))
 		if err == nil {
@@ -50,6 +57,8 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 			"3. open_memory id=<id> - get full card details when summary is not enough",
 			"4. remember memory={...} - persist new knowledge after completing work",
 		}
+		allProjects, _ := ws.ListProjects()
+		result["available_projects"] = allProjects
 		return result, nil
 	}))
 
@@ -57,6 +66,7 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 	reg.Register("remember", "Write one durable project memory card. Required: type, title, summary, content. Include source to achieve confidence > 0.5.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"project": projectProp,
 			"memory": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -144,6 +154,8 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 		},
 		"required": []string{"memory"},
 	}, wrap(func(params map[string]any) (any, error) {
+	svc, _, err := ws.resolve(extractProject(params))
+	if err != nil { return nil, err }
 		mem, ok := params["memory"].(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("memory parameter required")
@@ -155,6 +167,7 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 	reg.Register("recall", "Search memories (Level 2 disclosure). Returns short summaries only. Filter by paths to get file-specific context. Need details? Use open_memory.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"project": projectProp,
 			"query": map[string]any{
 				"type":        "string",
 				"description": "Search keyword or phrase. Supports both English and Chinese. Use concise terms for best results (e.g. 'PWM', '中断', '逆变器').",
@@ -170,6 +183,8 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 			"limit": map[string]any{"type": "integer"},
 		},
 	}, wrap(func(params map[string]any) (any, error) {
+	svc, _, err := ws.resolve(extractProject(params))
+	if err != nil { return nil, err }
 		query := ""
 		if v, ok := params["query"].(string); ok {
 			query = v
@@ -190,9 +205,12 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 	reg.Register("open_memory", "Level 3 disclosure: Get full card content by ID. Only call after recall returns a summary you need more detail on.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"project": projectProp,
 			"id": map[string]any{"type": "string"},
 		},
 	}, wrap(func(params map[string]any) (any, error) {
+	svc, _, err := ws.resolve(extractProject(params))
+	if err != nil { return nil, err }
 		id := ""
 		if v, ok := params["id"].(string); ok {
 			id = v
@@ -204,6 +222,7 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 	reg.Register("update_memory", "Update an existing memory card. Use to mark memories as stale, change confidence, add tags, update relations, or set expires_at.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"project": projectProp,
 			"id": map[string]any{"type": "string", "description": "Memory card ID (e.g. 'mem_20260612_001')."},
 			"updates": map[string]any{
 				"type":        "object",
@@ -212,6 +231,8 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 		},
 		"required": []string{"id", "updates"},
 	}, wrap(func(params map[string]any) (any, error) {
+	svc, _, err := ws.resolve(extractProject(params))
+	if err != nil { return nil, err }
 		id := ""
 		if v, ok := params["id"].(string); ok {
 			id = v
@@ -227,10 +248,13 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 	reg.Register("delete_memory", "Delete a single memory card permanently. Removes both the YAML file and the SQLite index entry.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"project": projectProp,
 			"id": map[string]any{"type": "string", "description": "Memory card ID to delete (e.g. 'mem_20260612_001')."},
 		},
 		"required": []string{"id"},
 	}, wrap(func(params map[string]any) (any, error) {
+	svc, _, err := ws.resolve(extractProject(params))
+	if err != nil { return nil, err }
 		id := ""
 		if v, ok := params["id"].(string); ok {
 			id = v
@@ -245,9 +269,12 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 	reg.Register("list_recent", "List recently created or updated memories.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"project": projectProp,
 			"limit": map[string]any{"type": "integer"},
 		},
 	}, wrap(func(params map[string]any) (any, error) {
+	svc, _, err := ws.resolve(extractProject(params))
+	if err != nil { return nil, err }
 		limit := 10
 		if v, ok := params["limit"].(float64); ok {
 			limit = int(v)
@@ -261,8 +288,12 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 
 	// 8. synthesize_rules
 	reg.Register("synthesize_rules", "Regenerate agent-rules.yaml from active convention and decision cards. Returns the full rules document. NOTE: init_project already returns the latest rules — use this only when you have written new memories and need fresh rules.", map[string]any{
-		"type": "object", "properties": map[string]any{},
+		"type": "object", "properties": map[string]any{
+			"project": projectProp,
+		},
 	}, wrap(func(params map[string]any) (any, error) {
+	svc, _, err := ws.resolve(extractProject(params))
+	if err != nil { return nil, err }
 		doc, err := svc.SynthesizeRules()
 		if err != nil {
 			return nil, err
@@ -290,6 +321,7 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 	reg.Register("disclosure", "渐进披露项目记忆。first模式返回高优先级(>=3)全貌；subsequent模式返回核心(>=5)+近期变更。减少上下文占用。", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"project": projectProp,
 			"mode": map[string]any{
 				"type":        "string",
 				"description": "Disclosure mode: 'first' or 'subsequent'",
@@ -302,6 +334,8 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 		},
 		"required": []string{"mode"},
 	}, wrap(func(params map[string]any) (any, error) {
+	svc, _, err := ws.resolve(extractProject(params))
+	if err != nil { return nil, err }
 		mode, _ := params["mode"].(string)
 		since, _ := params["since"].(string)
 		var results []map[string]any
@@ -346,12 +380,15 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 	reg.Register("check_rules_freshness", "Check if the synthesized rules are stale (i.e., newer convention/decision cards exist that have not been reflected in agent-rules.yaml). Returns stale status and the count of newer cards.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"project": projectProp,
 			"since": map[string]any{
 				"type":        "string",
 				"description": "Optional: ISO timestamp to check freshness against. If omitted, uses the rules file synthesized_at timestamp.",
 			},
 		},
 	}, wrap(func(params map[string]any) (any, error) {
+	svc, _, err := ws.resolve(extractProject(params))
+	if err != nil { return nil, err }
 		since, _ := params["since"].(string)
 		if since == "" {
 			// Try to read synthesized_at from rules file
@@ -406,6 +443,7 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 	reg.Register("context_for_files", "获取与指定文件关联的活跃记忆。传入当前编辑的文件路径，系统自动返回相关 conventions/decisions/已知问题。", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"project": projectProp,
 			"paths": map[string]any{
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
@@ -418,6 +456,17 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 		},
 		"required": []string{"paths"},
 	}, wrap(func(params map[string]any) (any, error) {
+	project := extractProject(params)
+	if project == "" {
+	    rawPaths, ok := params["paths"].([]any)
+	    if ok && len(rawPaths) > 0 {
+	        paths := make([]string, len(rawPaths))
+	        for ip, p := range rawPaths { paths[ip] = fmt.Sprint(p) }
+	        project = ws.AutoDetect(paths)
+	    }
+	}
+	svc, _, err := ws.resolve(project)
+	if err != nil { return nil, err }
 		paths := toStringSlice(params["paths"])
 		if len(paths) == 0 { return map[string]any{"results": []map[string]any{}, "matched_files": 0}, nil }
 		limit := 20
@@ -426,4 +475,17 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 		if err != nil { return nil, err }
 		return map[string]any{"results": results, "matched_files": len(paths)}, nil
 	}))
+	// 12. list_projects
+	reg.Register("list_projects", "列出当前工作区所有可用工程及其卡片数量。Agent 应在会话开始时调用此工具了解可用工程，然后在其他工具中使用 project 参数指定目标工程。", map[string]any{
+		"type": "object", "properties": map[string]any{},
+	}, wrap(func(params map[string]any) (any, error) {
+		projects, err := ws.ListProjects()
+		if err != nil { return nil, err }
+		return map[string]any{
+			"workspace": ws.workspaceDir,
+			"projects":  projects,
+			"count":     len(projects),
+		}, nil
+	}))
+
 }

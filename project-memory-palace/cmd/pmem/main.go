@@ -294,15 +294,24 @@ func cmdSynthesizeRules(args []string) int {
 
 func cmdServeMCP(args []string) int {
 	if len(args) > 0 { projectRoot = args[0] }
-	svc, err := newService()
-	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+
+	var ws *service.WorkspaceService
+	var err error
+	ws, err = service.NewWorkspace(projectRoot)
+	if err != nil || len(ws.ProjectNames()) == 0 {
+		ws, err = service.NewSingleProject(projectRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+	}
 
 	reg := mcp.NewToolRegistry()
-	service.RegisterAllTools(reg, svc, projectRoot, nil)
+	service.RegisterAllTools(reg, ws, nil)
 
 	srv := &mcp.StdioServer{Registry: reg, Reader: os.Stdin, Writer: os.Stdout}
-	defer svc.Close()
-	fmt.Fprintln(os.Stderr, "MCP server started")
+	defer ws.Close()
+	fmt.Fprintln(os.Stderr, "MCP server started (workspace mode, projects:", strings.Join(ws.ProjectNames(), ", "), ")")
 	if err := srv.Serve(); err != nil {
 		fmt.Fprintf(os.Stderr, "mcp error: %v\n", err)
 		return 1
