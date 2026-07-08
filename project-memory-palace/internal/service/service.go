@@ -92,7 +92,25 @@ func (s *MemoryService) OpenMemory(memoryID string) (map[string]any, error) {
 		return nil, &MemoryNotFoundError{ID: memoryID}
 	}
 	result := cardToMap(cardObj)
+	
+	// Advance access tracking, then merge v0.6 fields from SQLite
+	nowStr := now()
 	_ = s.idx.RecordAccess([]string{cardObj.ID})
+	result["access_count"] = 1
+	if ac, ok := meta["access_count"].(int); ok {
+		result["access_count"] = ac + 1
+	}
+	result["last_accessed_at"] = nowStr
+	result["effective_priority"] = index.EffectivePriority(cardObj.Priority, nowStr)
+	
+	// Merge source_agent and knowledge_kind from SQLite if YAML had empty values
+	if sa, ok := meta["source_agent"].(string); ok && sa != "" && result["source_agent"] == "" {
+		result["source_agent"] = sa
+	}
+	if kk, ok := meta["knowledge_kind"].(string); ok && kk != "" && result["knowledge_kind"] == "" {
+		result["knowledge_kind"] = kk
+	}
+	
 	result["project"] = filepath.Base(s.projectRoot)
 	return result, nil
 }
@@ -148,6 +166,11 @@ func (s *MemoryService) UpdateMemory(memoryID string, updates map[string]any) (m
 				}
 			}
 		}
+	}
+	if pr, ok := updates["priority"]; ok {
+		p, ok := toFloat64(pr)
+		if !ok || p < 1 || p > 5 { return nil, fmt.Errorf("priority must be 1-5") }
+		if int(p) != existing["priority"] { changed = true; existing["priority"] = int(p) }
 	}
 	if tags, ok := updates["tags"]; ok {
 		l, err := toStringList(tags)

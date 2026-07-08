@@ -189,6 +189,55 @@ body.light .badge-expired{background:#fee2e2;color:#991b1b}
 .resizer{width:5px;cursor:col-resize;background:var(--border);flex-shrink:0;transition:background .15s;position:relative;z-index:20}
 .resizer::after{content:'';position:absolute;inset:-6px -4px}
 .resizer:hover,.resizer.active{background:var(--accent)}
+
+/* Decay indicator dot in card list */
+.decay-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block}
+.decay-dot.fresh{background:var(--green);box-shadow:0 0 4px var(--green)}
+.decay-dot.warm{background:var(--yellow);box-shadow:0 0 4px var(--yellow)}
+.decay-dot.stale{background:var(--red);box-shadow:0 0 4px var(--red)}
+
+/* v0.6 field display in detail */
+.v06-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;font-size:12px;color:var(--text2)}
+.v06-row .field{display:flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;background:var(--surface);border:1px solid var(--border)}
+.v06-row .field .label{color:var(--text3);font-size:10px;text-transform:uppercase}
+.v06-row .field .value{color:var(--text);font-weight:600;font-size:11px}
+.v06-bar{width:50px;height:4px;background:var(--border2);border-radius:2px;overflow:hidden;display:inline-block;vertical-align:middle}
+.v06-bar .fill{height:100%;border-radius:2px;transition:width .4s}
+.v06-bar .fill.strong{background:var(--green)}
+.v06-bar .fill.medium{background:var(--yellow)}
+.v06-bar .fill.weak{background:var(--red)}
+
+/* Knowledge kind / source agent badges */
+.kind-badge{padding:2px 8px;border-radius:999px;font-size:10px;font-weight:600;display:inline-flex;align-items:center;gap:3px}
+.kind-badge.fact{background:rgba(52,211,153,.15);color:var(--green);border:1px solid rgba(52,211,153,.2)}
+.kind-badge.interpretation{background:rgba(108,108,240,.15);color:var(--accent);border:1px solid rgba(108,108,240,.2)}
+.kind-badge.rule{background:rgba(251,191,36,.15);color:var(--yellow);border:1px solid rgba(251,191,36,.2)}
+.source-badge{padding:2px 8px;border-radius:999px;font-size:10px;font-weight:600;background:var(--surface2);color:var(--text2);border:1px solid var(--border)}
+
+/* Inline edit form */
+.edit-form{background:var(--surface);border:1px solid var(--accent);border-radius:var(--radius);padding:16px;margin-top:12px}
+.edit-form .field-row{display:flex;align-items:center;gap:10px;margin:8px 0}
+.edit-form .field-row label{font-size:11px;font-weight:600;color:var(--text2);min-width:80px;text-align:right;flex-shrink:0}
+.edit-form .field-row input,.edit-form .field-row select,.edit-form .field-row textarea{flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-size:12px;font-family:var(--font);outline:none}
+.edit-form .field-row input:focus,.edit-form .field-row select:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-fade)}
+.edit-form .field-row input[type=range]{padding:0}
+.edit-form .edit-tags{display:flex;flex-wrap:wrap;gap:5px;align-items:center;flex:1}
+.edit-form .edit-tags .tag{display:flex;align-items:center;gap:4px;padding:2px 6px 2px 10px}
+.edit-form .edit-tags .tag .tag-del{background:none;border:none;color:var(--accent);cursor:pointer;font-size:12px;padding:0;line-height:1;opacity:.7}
+.edit-form .edit-tags .tag .tag-del:hover{opacity:1}
+.edit-form .edit-tags input{border:none;background:transparent;padding:4px;font-size:11px;min-width:80px;color:var(--text);outline:none}
+.edit-form .edit-tags input::placeholder{color:var(--text3)}
+.edit-form .edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.edit-form .edit-actions button{padding:5px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer;font-family:var(--font);transition:all .15s}
+.edit-form .edit-actions button:hover{background:var(--text3);color:var(--text)}
+.edit-form .edit-actions button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.edit-form .edit-actions button.primary:hover{background:var(--accent2);border-color:var(--accent2)}
+
+/* Priority stars */
+.prio-stars{display:inline-flex;gap:2px}
+.prio-stars .star{width:10px;height:10px;clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);background:var(--border2)}
+.prio-stars .star.on{background:var(--yellow)}'
+
 </style>
 </head>
 <body class="dark">
@@ -357,6 +406,7 @@ function renderList(items){
     var ts=timeAgo(c.updated_at||'');
     return '<div class="card-item" data-id="'+c.id+'" onclick="showDetail(\''+c.id+'\')" oncontextmenu="event.preventDefault();showCtx(event,\''+c.id+'\')">'+
       '<div class="card-head"><span class="type-dot '+(c.type||'')+'"></span>'+
+      '<span class="decay-dot '+decayClass(c)+'"></span>'+
       '<span class="card-title" title="'+esc(c.title||'')+'">'+esc(c.title||'')+'</span></div>'+
       '<div class="card-summary">'+esc(c.summary||'')+'</div>'+
       '<div class="card-foot">'+
@@ -393,7 +443,8 @@ function renderDetail(d){
     '<span class="badge badge-'+s+'">'+(s==='active'?'有效':s==='stale'?'过时':s==='superseded'?'已取代':s==='rejected'?'废弃':s==='expired'?'已过期':'未知')+'</span>'+
     '<span>'+(TYPES[d.type]||esc(d.type||''))+'</span>'+
     '<span class="confidence-row">置信度 <span class="confidence-bar"><span class="confidence-fill" style="width:'+ci+'%"></span></span> '+ci+'%</span>'+
-    '<span class="id-badge">'+esc(d.id||'')+'</span></div></div>';
+    '<span class="id-badge">'+esc(d.id||'')+'</span></div>'+
+    v06Fields(d)+'</div>';
   if(d.summary)h+=card('📝 摘要',d.summary);
   if(d.content)h+=card('📄 内容',d.content.replace(/\n/g,'<br>'));
   if(d.source&&d.source.description)h+=card('🔗 来源','<strong>'+esc(d.source.kind||'')+'</strong> — '+esc(d.source.description||''));
@@ -423,6 +474,41 @@ function renderDetail(d){
 function card(title,content){
   return '<div class="detail-card"><h4>'+title+'</h4><div class="card-body">'+content+'</div></div>';
 }
+
+function v06Fields(d){
+  var h='<div class="v06-row">';
+  // access_count
+  if(d.access_count!==undefined)h+='<span class="field"><span class="label">??? </span><span class="value">'+d.access_count+'</span></span>';
+  // last_accessed_at
+  if(d.last_accessed_at)h+='<span class="field"><span class="label">?? </span><span class="value">'+timeAgo(d.last_accessed_at)+'</span></span>';
+  // effective_priority with visual bar
+  if(d.effective_priority!==undefined&&d.priority){
+    var ep=d.effective_priority,mp=d.priority;
+    var pct=Math.round((ep/mp)*100);
+    var barCl='weak';if(pct>=99)barCl='strong';else if(pct>=60)barCl='medium';
+    h+='<span class="field"><span class="label">? </span><span class="value">'+mp+'?'+ep.toFixed(1)+' <span class="v06-bar"><span class="fill '+barCl+'" style="width:'+Math.min(pct,100)+'%"></span></span></span></span>';
+  }
+  // knowledge_kind badge
+  if(d.knowledge_kind){
+    var kk=d.knowledge_kind;
+    var icons={fact:'??',interpretation:'??',rule:'??'};
+    h+='<span class="kind-badge '+kk+'">'+(icons[kk]||'?')+' '+kk+'</span>';
+  }
+  // source_agent badge
+  if(d.source_agent)h+='<span class="source-badge">?? '+esc(d.source_agent)+'</span>';
+  h+='</div>';
+  return h;
+}
+
+function decayClass(c){
+  var ep=c.effective_priority,mp=c.priority;
+  if(!mp||mp<=0)return'fresh';
+  var r=ep/mp;
+  if(r>=0.99)return'fresh';
+  if(r>=0.6)return'warm';
+  return'stale';
+}
+
 
 // ===== Tabs =====
 function switchTab(tab){
@@ -510,6 +596,108 @@ function markStatus(s){
     showDetail(currentID);loadRecent();
   }).catch(function(){toast('更新失败')});
   hideCtx();
+}
+
+// ===== Edit =====
+var editActive=false;
+
+function toggleEdit(){
+  editActive=!editActive;
+  var ef=document.getElementById('editForm');
+  if(!editActive){ef.style.display='none';return}
+  if(!currentID){editActive=false;return}
+  api('/api/open?id='+currentID).then(function(d){
+    ef.style.display='block';
+    ef.innerHTML=buildEditForm(d);
+  }).catch(function(){editActive=false;toast('????????')});
+}
+
+function buildEditForm(d){
+  var tags=(d.tags||[]).map(function(t){return'<span class="tag">'+esc(t)+'<button class="tag-del" onclick="removeTag(this,\''+esc(t)+'\')">?</button></span>'}).join('');
+  var statusOpts=['active','stale','superseded','rejected','expired'].map(function(s){
+    return'<option value="'+s+'"'+(s===d.status?' selected':'')+'>'+(s==='active'?'??':s==='stale'?'??':s==='superseded'?'???':s==='rejected'?'??':s==='expired'?'???':'')+'</option>';
+  }).join('');
+  var kkOpts=['','fact','interpretation','rule'].map(function(k){
+    return'<option value="'+k+'"'+(k===(d.knowledge_kind||'')?' selected':'')+'>'+(k||'???')+'</option>';
+  }).join('');
+  var ci=Math.round((d.confidence||0)*100);
+  var prioStars='';
+  for(var i=1;i<=5;i++){
+    prioStars+='<span class="star'+(i<=(d.priority||3)?' on':'')+'" onclick="setPrio('+i+')" style="cursor:pointer;width:16px;height:16px;display:inline-block"></span>';
+  }
+  return ''+
+    '<div class="field-row"><label>??</label><div class="edit-tags">'+tags+'<input id="editNewTag" placeholder="???????" onkeydown="if(event.key===\'Enter\')addTag()"></div></div>'+
+    '<div class="field-row"><label>??</label><select id="editStatus">'+statusOpts+'</select></div>'+
+    '<div class="field-row"><label>???</label><input type="range" id="editConfidence" min="0" max="100" value="'+ci+'" oninput="document.getElementById(\'confVal\').textContent=this.value+'%'"> <span id="confVal" style="font-size:11px;min-width:30px;font-weight:600;color:var(--accent)">'+ci+'%</span></div>'+
+    '<div class="field-row"><label>???</label><span class="prio-stars" id="editPrioStars">'+prioStars+'</span> <input type="hidden" id="editPriority" value="'+(d.priority||3)+'"></div>'+
+    '<div class="field-row"><label>????</label><select id="editKind">'+kkOpts+'</select></div>'+
+    '<div class="edit-actions"><button onclick="cancelEdit()">??</button><button class="primary" onclick="saveEdit()">?? ??</button></div>';
+}
+
+function setPrio(p){
+  document.getElementById('editPriority').value=p;
+  var stars=document.getElementById('editPrioStars').querySelectorAll('.star');
+  for(var i=0;i<stars.length;i++){stars[i].classList.toggle('on',i<p)}
+}
+
+function addTag(){
+  var inp=document.getElementById('editNewTag');
+  if(!inp)return;
+  var t=inp.value.trim();
+  if(!t)return;
+  var form=document.getElementById('editForm');
+  // Add tag visually
+  var tagEl=document.createElement('span');
+  tagEl.className='tag';
+  var txt=document.createElement('span');
+  txt.textContent=t;
+  tagEl.appendChild(txt);
+  var btn=document.createElement('button');
+  btn.className='tag-del';
+  btn.textContent='?';
+  btn.onclick=function(){tagEl.remove()};
+  tagEl.appendChild(btn);
+  var container=form.querySelector('.edit-tags');
+  if(container)container.insertBefore(tagEl,container.lastElementChild);
+  inp.value='';
+}
+
+function removeTag(el,tag){
+  el.parentElement.remove();
+}
+
+function cancelEdit(){
+  editActive=false;
+  document.getElementById('editForm').style.display='none';
+}
+
+function saveEdit(){
+  if(!currentID)return;
+  var params='id='+encodeURIComponent(currentID);
+  var status=document.getElementById('editStatus').value;
+  if(status)params+='&status='+encodeURIComponent(status);
+  var confidence=parseInt(document.getElementById('editConfidence').value)/100;
+  if(confidence>=0)params+='&confidence='+confidence;
+  var priority=document.getElementById('editPriority').value;
+  if(priority)params+='&priority='+priority;
+  var kind=document.getElementById('editKind').value;
+  if(kind)params+='&knowledge_kind='+encodeURIComponent(kind);
+  // Collect tags from the edit form
+  var tags=[];
+  var form=document.getElementById('editForm');
+  var tagEls=form.querySelectorAll('.edit-tags .tag');
+  tagEls.forEach(function(el){
+    var txt=el.firstChild.textContent;
+    if(txt)tags.push(txt);
+  });
+  if(tags.length)params+='&tags='+encodeURIComponent(tags.join(','));
+  api('/api/update?'+params,{method:'POST'}).then(function(){
+    toast('?????');
+    editActive=false;
+    document.getElementById('editForm').style.display='none';
+    showDetail(currentID);
+    loadRecent();
+  }).catch(function(){toast('????')});
 }
 
 function deleteMemory(){

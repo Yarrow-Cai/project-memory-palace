@@ -393,12 +393,14 @@ func (idx *MemoryIndex) GetMemory(id string) (map[string]any, error) {
 	var (
 		dbID, tp, st, title, summary, sk        string
 		tagsJSON, modsJSON, pathsJSON, expires, upd string
+		sourceAgent, knowledgeKind, lastAccessedAt string
 		conf     float64
 		priority int
+		accessCount int
 	)
 	err = db.QueryRow(
-		"SELECT id,type,status,title,summary,source_kind,confidence,priority,tags_json,modules_json,paths_json,expires_at,updated_at FROM memories WHERE id=?", id,
-	).Scan(&dbID, &tp, &st, &title, &summary, &sk, &conf, &priority, &tagsJSON, &modsJSON, &pathsJSON, &expires, &upd)
+		"SELECT id,type,status,title,summary,source_kind,confidence,priority,tags_json,modules_json,paths_json,expires_at,updated_at,source_agent,knowledge_kind,access_count,last_accessed_at FROM memories WHERE id=?", id,
+	).Scan(&dbID, &tp, &st, &title, &summary, &sk, &conf, &priority, &tagsJSON, &modsJSON, &pathsJSON, &expires, &upd, &sourceAgent, &knowledgeKind, &accessCount, &lastAccessedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -418,6 +420,8 @@ func (idx *MemoryIndex) GetMemory(id string) (map[string]any, error) {
 		"confidence": conf, "priority": priority,
 		"tags": tags, "modules": mods, "paths": paths,
 		"expires_at": expires, "updated_at": upd,
+		"access_count": accessCount, "last_accessed_at": lastAccessedAt,
+		"source_agent": sourceAgent, "knowledge_kind": knowledgeKind,
 	}, nil
 }
 
