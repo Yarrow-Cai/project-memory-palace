@@ -4,6 +4,17 @@
 
 `pmem` 在项目根目录创建 `.project-memory/` 持久化记忆卡片（YAML），通过 SQLite 索引提供快速搜索，并通过 MCP 协议向 Claude Desktop / Claude Code / Codex CLI 提供渐进披露的项目上下文。
 
+### v1.0 新增
+
+- **关系图谱** — `get_relations` 支持双向图遍历，`depends_on`/`contradicts`/`implements` 等受控关系类型
+- **语义去重** — `check_duplicates` 检测相似卡片，避免知识冗余
+- **版本历史** — 每次更新自动保存旧版本到 `.project-memory/history/`
+- **衰减感知检索** — `RecallAll` 按有效优先级排序，冷门卡片自动降权
+- **数据完整性** — `pmem verify` 检查 YAML ↔ SQLite 一致性
+- **导出** — `pmem export [--format json]` 导出全部记忆
+- **批量操作** — `remember_batch` / `recall_batch` 减少 MCP 调用开销
+- **21 个 MCP 工具** · **16 个 CLI 命令** · **21 个 Web API** · 托盘/SSE/stdio 三模式
+
 ---
 
 ## 一分钟安装
