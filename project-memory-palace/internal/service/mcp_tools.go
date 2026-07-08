@@ -718,4 +718,47 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 			"suggestions":    suggestions,
 		}, nil
 	}))
+	// 19. remember_batch
+	reg.Register("remember_batch", "批量写入多张记忆卡片，减少 MCP 调用开销。返回每张卡片的成功/失败详情。", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"memories": map[string]any{
+				"type": "array",
+				"description": "记忆卡片数组，每张卡片与 remember 工具参数格式相同",
+			},
+			"project": projectProp,
+		},
+		"required": []string{"memories"},
+	}, wrap(func(params map[string]any) (any, error) {
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil { return nil, err }
+		raw, ok := params["memories"].([]any)
+		if !ok || len(raw) == 0 { return nil, fmt.Errorf("memories must be a non-empty array") }
+		payloads := make([]map[string]any, len(raw))
+		for i, m := range raw { payloads[i], _ = m.(map[string]any) }
+		return svc.RememberBatch(payloads)
+	}))
+
+	// 20. recall_batch
+	reg.Register("recall_batch", "按 ID 列表批量获取完整卡片内容，减少 MCP 调用开销。", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"ids": map[string]any{
+				"type": "array",
+				"items": map[string]any{"type": "string"},
+				"description": "卡片 ID 列表",
+			},
+			"project": projectProp,
+		},
+		"required": []string{"ids"},
+	}, wrap(func(params map[string]any) (any, error) {
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil { return nil, err }
+		raw, ok := params["ids"].([]any)
+		if !ok || len(raw) == 0 { return nil, fmt.Errorf("ids must be a non-empty array") }
+		ids := make([]string, len(raw))
+		for i, v := range raw { ids[i] = fmt.Sprint(v) }
+		return svc.RecallBatch(ids)
+	}))
+
 }

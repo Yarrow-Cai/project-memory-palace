@@ -85,6 +85,53 @@ func (s *MemoryService) Remember(payload map[string]any) (map[string]any, error)
 	return nil, fmt.Errorf("remember: failed after %d attempts: %w", rememberIDAttempts, lastErr)
 }
 
+func (s *MemoryService) RememberBatch(payloads []map[string]any) (map[string]any, error) {
+	if err := s.InitProject(); err != nil { return nil, err }
+	var results []map[string]any
+	var errors []map[string]any
+	dateStr := time.Now().Format("2006-01-02")
+	for i, payload := range payloads {
+		if err := memory.ValidatePayload(payload); err != nil {
+			errors = append(errors, map[string]any{"index": i, "error": err.Error()})
+			continue
+		}
+		var lastErr error
+		for attempt := 0; attempt < rememberIDAttempts; attempt++ {
+			cardID, _, err := store.NextCardIdentity(s.projectRoot, dateStr)
+			if err != nil { lastErr = err; continue }
+			card := buildCard(cardID, payload)
+			if err := s.validateRelationTargets(&card); err != nil { lastErr = err; continue }
+			path, err := store.WriteCard(s.projectRoot, &card, false)
+			if err != nil { lastErr = err; continue }
+			if err := s.idx.Upsert(&card); err != nil { store.RemoveCard(path); lastErr = err; continue }
+			results = append(results, map[string]any{"index": i, "id": cardID, "status": "created"})
+			break
+		}
+		if lastErr != nil {
+			errors = append(errors, map[string]any{"index": i, "error": lastErr.Error()})
+		}
+	}
+	return map[string]any{"created": results, "errors": errors, "total": len(payloads), "success": len(results)}, nil
+}
+
+func (s *MemoryService) RecallBatch(ids []string) ([]map[string]any, error) {
+	if err := s.InitProject(); err != nil { return nil, err }
+	var results []map[string]any
+	for _, id := range ids {
+		card, err := s.OpenMemory(id)
+		if err != nil {
+			results = append(results, map[string]any{"id": id, "error": err.Error()})
+		} else {
+			results = append(results, card)
+		}
+	}
+	if len(results) > 0 {
+		_ = s.idx.RecordAccess(extractIDs(results))
+	}
+	return results, nil
+}
+
+
 func (s *MemoryService) Recall(query string, filters map[string]any, limit int) ([]map[string]any, error) {
 	if err := s.InitProject(); err != nil { return nil, err }
 	results, err := s.idx.Search(query, filters, limit)
