@@ -229,10 +229,14 @@ func startAPI() {
 	http.HandleFunc("/api/health", handleHealth)
 	http.HandleFunc("/message", sseServer.HandleMessage)
 	http.HandleFunc("/api/recent", handleRecent)
-	http.HandleFunc("/api/search", handleSearch)
+http.HandleFunc("/api/search", handleSearch)
+	http.HandleFunc("/api/context", handleContext)
+	http.HandleFunc("/api/hot", handleHot)
 	http.HandleFunc("/api/open", handleOpen)
-	http.HandleFunc("/api/update", handleUpdate)
-http.HandleFunc("/api/project", handleProject)
+http.HandleFunc("/api/update", handleUpdate)
+	http.HandleFunc("/api/delete", handleDelete)
+	http.HandleFunc("/api/purge", handlePurge)
+	http.HandleFunc("/api/project", handleProject)
 	http.HandleFunc("/api/projects", handleProjects)
 	http.HandleFunc("/api/project/set", handleProjectSet)
 	http.HandleFunc("/api/project/remove", handleProjectRemove)
@@ -325,6 +329,45 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := svc.UpdateMemory(id, updates)
 	writeWebJSONRaw(w, result, err)
+}
+
+func handleDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeWebJSONRaw(w, nil, fmt.Errorf("POST required"))
+		return
+	}
+	mu.Lock(); defer mu.Unlock()
+	id := r.URL.Query().Get("id")
+	if id == "" { writeWebJSONRaw(w, nil, fmt.Errorf("id parameter required")); return }
+	result, err := svc.DeleteMemory(id)
+	writeWebJSONRaw(w, result, err)
+}
+
+func handlePurge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeWebJSONRaw(w, nil, fmt.Errorf("POST required"))
+		return
+	}
+	mu.Lock(); defer mu.Unlock()
+	result, err := svc.PurgeExpired()
+	writeWebJSONRaw(w, result, err)
+}
+
+func handleContext(w http.ResponseWriter, r *http.Request) {
+	mu.Lock(); defer mu.Unlock()
+	pathStr := r.URL.Query().Get("paths")
+	if pathStr == "" { writeWebJSONList(w, nil, nil); return }
+	paths := strings.Split(pathStr, ",")
+	limit := service.ParseIntParam(r.URL.Query().Get("limit"), 20)
+	results, err := svc.ContextForFiles(paths, limit)
+	writeWebJSONList(w, results, err)
+}
+
+func handleHot(w http.ResponseWriter, r *http.Request) {
+	mu.Lock(); defer mu.Unlock()
+	limit := service.ParseIntParam(r.URL.Query().Get("limit"), 20)
+	results, err := svc.HotMemories(limit)
+	writeWebJSONList(w, results, err)
 }
 
 func handleProject(w http.ResponseWriter, r *http.Request) {

@@ -43,6 +43,27 @@ func (s *MemoryService) InitProject() error {
 	return nil
 }
 
+// validateRelationTargets checks that all relation targets exist in the index.
+// Returns nil if there are no relations or all targets exist.
+func (s *MemoryService) validateRelationTargets(card *memory.MemoryCard) error {
+	if len(card.Relations) == 0 {
+		return nil
+	}
+	var missing []string
+	for _, targets := range card.Relations {
+		for _, target := range targets {
+			meta, _ := s.idx.GetMemory(target)
+			if meta == nil {
+				missing = append(missing, target)
+			}
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("relation targets not found: %v", missing)
+	}
+	return nil
+}
+
 func (s *MemoryService) Remember(payload map[string]any) (map[string]any, error) {
 	if err := s.InitProject(); err != nil { return nil, err }
 	if err := memory.ValidatePayload(payload); err != nil { return nil, err }
@@ -52,6 +73,7 @@ func (s *MemoryService) Remember(payload map[string]any) (map[string]any, error)
 		cardID, _, err := store.NextCardIdentity(s.projectRoot, dateStr)
 		if err != nil { return nil, fmt.Errorf("remember: %w", err) }
 		card := buildCard(cardID, payload)
+		if err := s.validateRelationTargets(&card); err != nil { return nil, err }
 		path, err := store.WriteCard(s.projectRoot, &card, false)
 		if err != nil { lastErr = err; continue }
 		if err := s.idx.Upsert(&card); err != nil { store.RemoveCard(path); return nil, fmt.Errorf("remember: index error: %w", err) }
@@ -205,6 +227,7 @@ func (s *MemoryService) UpdateMemory(memoryID string, updates map[string]any) (m
 	if !changed { return existing, nil }
 	existing["updated_at"] = now()
 	card := mapToCard(existing)
+	if err := s.validateRelationTargets(card); err != nil { return nil, err }
 	if _, err := store.WriteCard(s.projectRoot, card, true); err != nil { return nil, err }
 	if err := s.idx.Upsert(card); err != nil { return nil, err }
 	return cardToMap(card), nil
