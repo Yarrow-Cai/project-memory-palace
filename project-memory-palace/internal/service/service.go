@@ -313,6 +313,219 @@ func (s *MemoryService) Disclosure(mode, since string) ([]map[string]any, error)
 	}
 }
 
+// GetRelations returns relations data for a given card, with optional graph traversal.
+func (s *MemoryService) GetRelations(id string, direction string, depth int) (map[string]any, error) {
+	if err := s.InitProject(); err != nil {
+		return nil, err
+	}
+	if depth < 1 {
+		depth = 1
+	}
+	if depth > 3 {
+		depth = 3
+	}
+
+	// Verify card exists
+	meta, err := s.idx.GetMemory(id)
+	if err != nil {
+		return nil, err
+	}
+	if meta == nil {
+		return nil, fmt.Errorf("card not found: %s", id)
+	}
+
+	// Get outgoing relations from the index (relations table)
+	outgoing, err := s.idx.GetRelations(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get referrers (cards pointing to this one)
+	referrerIDs, err := s.idx.FindReferrers(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build incoming relations map from referrers
+	incoming := make(map[string][]string)
+	if direction == "incoming" || direction == "both" || direction == "" {
+		for _, refID := range referrerIDs {
+			refMeta, _ := s.idx.GetMemory(refID)
+			if refMeta == nil {
+				continue
+			}
+			refRels, _ := s.idx.GetRelations(refID)
+			for relKind, targets := range refRels {
+				for _, target := range targets {
+					if target == id {
+						incoming[relKind] = append(incoming[relKind], refID)
+					}
+				}
+			}
+		}
+	}
+
+	result := map[string]any{
+		"id":       id,
+		"title":    meta["title"],
+		"outgoing": outgoing,
+		"incoming": incoming,
+	}
+
+	// Populate card titles for relation targets
+	cardTitles := make(map[string]string)
+	cardTitles[id] = fmt.Sprint(meta["title"])
+	for _, targets := range outgoing {
+		for _, tid := range targets {
+			if _, ok := cardTitles[tid]; !ok {
+				if tm, _ := s.idx.GetMemory(tid); tm != nil {
+					cardTitles[tid] = fmt.Sprint(tm["title"])
+				}
+			}
+		}
+	}
+	for _, refIDs := range incoming {
+		for _, rid := range refIDs {
+			if _, ok := cardTitles[rid]; !ok {
+				if rm, _ := s.idx.GetMemory(rid); rm != nil {
+					cardTitles[rid] = fmt.Sprint(rm["title"])
+				}
+			}
+		}
+	}
+	result["card_titles"] = cardTitles
+
+	// Graph traversal for depth > 1
+	if depth > 1 {
+		graph := s.traverseRelations(id, direction, depth)
+		result["graph"] = graph
+	}
+
+	return result, nil
+}
+
+// traverseRelations performs BFS graph traversal from a starting card.
+func (s *MemoryService) traverseRelations(startID, direction string, maxDepth int) map[string]any {
+	visited := map[string]bool{startID: true}
+	nodes := []map[string]any{}
+	edges := []map[string]any{}
+
+	type item struct {
+		id    string
+		depth int
+	}
+	queue := []item{{id: startID, depth: 0}}
+
+	// Add start node
+	if m, _ := s.idx.GetMemory(startID); m != nil {
+		nodes = append(nodes, map[string]any{
+			"id":    startID,
+			"title": m["title"],
+			"type":  m["type"],
+			"depth": 0,
+		})
+	}
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current.depth >= maxDepth {
+			continue
+		}
+
+		// Outgoing
+		if direction == "outgoing" || direction == "both" || direction == "" {
+			rels, _ := s.idx.GetRelations(current.id)
+			for relKind, targets := range rels {
+				for _, tid := range targets {
+					if visited[tid] {
+						edges = append(edges, map[string]any{
+							"from": current.id, "to": tid, "relation": relKind,
+							"direction": "outgoing",
+						})
+						continue
+					}
+					visited[tid] = true
+					tm, _ := s.idx.GetMemory(tid)
+					title := ""
+					tp := ""
+					if tm != nil {
+						title = fmt.Sprint(tm["title"])
+						tp = fmt.Sprint(tm["type"])
+					}
+					nodes = append(nodes, map[string]any{
+						"id":    tid,
+						"title": title,
+						"type":  tp,
+						"depth": current.depth + 1,
+					})
+					edges = append(edges, map[string]any{
+						"from": current.id, "to": tid, "relation": relKind,
+						"direction": "outgoing",
+					})
+					queue = append(queue, item{id: tid, depth: current.depth + 1})
+				}
+			}
+		}
+
+		// Incoming
+		if direction == "incoming" || direction == "both" {
+			refs, _ := s.idx.FindReferrers(current.id)
+			for _, refID := range refs {
+				if visited[refID] {
+					// Add edge even if visited
+					refRels, _ := s.idx.GetRelations(refID)
+					for rk, targets := range refRels {
+						for _, t := range targets {
+							if t == current.id {
+								edges = append(edges, map[string]any{
+									"from": refID, "to": current.id, "relation": rk,
+									"direction": "incoming",
+								})
+							}
+						}
+					}
+					continue
+				}
+				visited[refID] = true
+				rm, _ := s.idx.GetMemory(refID)
+				title := ""
+				tp := ""
+				if rm != nil {
+					title = fmt.Sprint(rm["title"])
+					tp = fmt.Sprint(rm["type"])
+				}
+				nodes = append(nodes, map[string]any{
+					"id":    refID,
+					"title": title,
+					"type":  tp,
+					"depth": current.depth + 1,
+				})
+				// Find which relation kind was used
+				refRels, _ := s.idx.GetRelations(refID)
+				relKind := "related_to"
+				for rk, targets := range refRels {
+					for _, t := range targets {
+						if t == current.id {
+							relKind = rk
+						}
+					}
+				}
+				edges = append(edges, map[string]any{
+					"from": refID, "to": current.id, "relation": relKind,
+					"direction": "incoming",
+				})
+				queue = append(queue, item{id: refID, depth: current.depth + 1})
+			}
+		}
+	}
+
+	return map[string]any{
+		"nodes": nodes,
+		"edges": edges,
+	}
+}
+
 func extractIDs(results []map[string]any) []string {
 	ids := make([]string, 0, len(results))
 	for _, r := range results {

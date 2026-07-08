@@ -26,6 +26,35 @@ var SourceKinds = map[string]bool{
 
 var RelationKinds = []string{
 	"supersedes", "superseded_by", "related_to", "explains", "caused_by",
+	"depends_on", "contradicts", "abstracts", "implements", "derives_from",
+	"replaces", "documents",
+}
+
+var RelationSemantics = map[string]map[string]string{
+	"supersedes":    {"inverse": "superseded_by", "desc": "新版本替代旧版本"},
+	"superseded_by": {"inverse": "supersedes", "desc": "被新版本替代"},
+	"depends_on":    {"inverse": "depended_by", "desc": "依赖"},
+	"contradicts":   {"inverse": "contradicts", "desc": "矛盾/互斥", "symmetric": "true"},
+	"abstracts":     {"inverse": "abstracted_by", "desc": "抽象概括"},
+	"implements":    {"inverse": "implemented_by", "desc": "具体实现"},
+	"derives_from":  {"inverse": "derived_by", "desc": "派生自"},
+	"replaces":      {"inverse": "replaced_by", "desc": "取代旧版"},
+	"documents":     {"inverse": "documented_by", "desc": "文档记录"},
+	"explains":      {"inverse": "explained_by", "desc": "解释说明"},
+	"caused_by":     {"inverse": "causes", "desc": "因果关系"},
+	"related_to":    {"inverse": "related_to", "desc": "一般关联", "symmetric": "true"},
+}
+
+func IsValidRelation(kind string) bool {
+	if kind == "" {
+		return false
+	}
+	for _, r := range RelationKinds {
+		if r == kind {
+			return true
+		}
+	}
+	return false
 }
 
 var RequiredFields = []string{

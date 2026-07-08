@@ -456,6 +456,23 @@ func (idx *MemoryIndex) FindReferrers(targetID string) ([]string, error) {
 	return ids, rows.Err()
 }
 
+// GetRelations returns the relations map (relation kind -> []target_id) for a given source.
+func (idx *MemoryIndex) GetRelations(sourceID string) (map[string][]string, error) {
+	if err := idx.Initialize(); err != nil { return nil, err }
+	db, err := idx.connect()
+	if err != nil { return nil, err }
+	rows, err := db.Query("SELECT relation, target_id FROM relations WHERE source_id=?", sourceID)
+	if err != nil { return nil, fmt.Errorf("get relations: %w", err) }
+	defer rows.Close()
+	result := make(map[string][]string)
+	for rows.Next() {
+		var rel, target string
+		if err := rows.Scan(&rel, &target); err != nil { return nil, err }
+		result[rel] = append(result[rel], target)
+	}
+	return result, rows.Err()
+}
+
 func (idx *MemoryIndex) Rebuild() error {
 	cards, err := store.DiscoverCards(idx.projectRoot)
 	if err != nil { return fmt.Errorf("rebuild: %w", err) }

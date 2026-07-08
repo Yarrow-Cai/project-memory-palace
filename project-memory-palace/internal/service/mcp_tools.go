@@ -564,13 +564,55 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 	}))
 
 	// 16. refresh_workspace
-	reg.Register("refresh_workspace", "刷新工作区，扫描新添加的工程。添加新工程后无需重启服务。", map[string]any{
-		"type": "object", "properties": map[string]any{},
+	// 16. refresh_workspace
+	reg.Register("refresh_workspace", "刷新工作区，扫描新添加的工程。添加新工程后无需重启服务。", map[string]any{"type": "object", "properties": map[string]any{},
 	}, wrap(func(params map[string]any) (any, error) {
 		added := ws.RefreshWorkspace()
 		return map[string]any{
 			"added":          added,
 			"total_projects": len(ws.ProjectNames()),
 		}, nil
+	}))
+
+	// 17. get_relations
+	reg.Register("get_relations", "获取卡片的关系图。返回出向关系、入向引用、卡片标题，支持多层级图遍历（最多3层）。", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id": map[string]any{
+				"type":        "string",
+				"description": "卡片 ID（如 'mem_20260101_001'）",
+			},
+			"direction": map[string]any{
+				"type":        "string",
+				"description": "关系方向: 'outgoing'（出向，默认）, 'incoming'（入向）, 或 'both'（双向）",
+				"enum":        []string{"outgoing", "incoming", "both"},
+			},
+			"depth": map[string]any{
+				"type":        "integer",
+				"description": "图遍历深度（默认 1，最大 3）",
+				"minimum":     float64(1),
+				"maximum":     float64(3),
+			},
+			"project": projectProp,
+		},
+		"required": []string{"id"},
+	}, wrap(func(params map[string]any) (any, error) {
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil {
+			return nil, err
+		}
+		id, _ := params["id"].(string)
+		if id == "" {
+			return nil, fmt.Errorf("id parameter required")
+		}
+		direction := "outgoing"
+		if v, ok := params["direction"].(string); ok && v != "" {
+			direction = v
+		}
+		depth := 1
+		if v, ok := params["depth"].(float64); ok {
+			depth = int(v)
+		}
+		return svc.GetRelations(id, direction, depth)
 	}))
 }

@@ -241,6 +241,7 @@ func startAPI() {
 	http.HandleFunc("/api/disclosure", handleDisclosure)
 	http.HandleFunc("/api/workspace/refresh", handleWorkspaceRefresh)
 	http.HandleFunc("/api/vacuum", handleVacuum)
+	http.HandleFunc("/api/relations", handleRelations)
 	fmt.Fprintln(os.Stderr, "API + SSE server started on 127.0.0.1:8147")
 	if err := http.ListenAndServe("127.0.0.1:8147", nil); err != nil {
 		log.Printf("HTTP server error: %v", err)
@@ -446,6 +447,23 @@ func writeWebJSONRaw(w http.ResponseWriter, data map[string]any, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil { json.NewEncoder(w).Encode(map[string]any{"error": err.Error()}); return }
 	json.NewEncoder(w).Encode(data)
+}
+
+func handleRelations(w http.ResponseWriter, r *http.Request) {
+	mu.Lock()
+	defer mu.Unlock()
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeWebJSONRaw(w, nil, fmt.Errorf("id parameter required"))
+		return
+	}
+	direction := r.URL.Query().Get("direction")
+	if direction == "" {
+		direction = "both"
+	}
+	depth := parseIntParam(r.URL.Query().Get("depth"), 1)
+	result, err := svc.GetRelations(id, direction, depth)
+	writeWebJSONRaw(w, result, err)
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {

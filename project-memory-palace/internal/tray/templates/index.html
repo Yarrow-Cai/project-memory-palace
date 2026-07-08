@@ -214,6 +214,23 @@ body.light .badge-expired{background:#fee2e2;color:#991b1b}
 .kind-badge.rule{background:rgba(251,191,36,.15);color:var(--yellow);border:1px solid rgba(251,191,36,.2)}
 .source-badge{padding:2px 8px;border-radius:999px;font-size:10px;font-weight:600;background:var(--surface2);color:var(--text2);border:1px solid var(--border)}
 
+/* Relation badges */
+.rel-badge{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid transparent;transition:all .15s;text-decoration:none}
+.rel-badge:hover{filter:brightness(1.2);transform:translateY(-1px)}
+.rel-supersedes{background:rgba(248,113,113,.12);color:#fca5a5;border-color:rgba(248,113,113,.25)}
+.rel-superseded_by{background:rgba(156,163,175,.12);color:#d1d5db;border-color:rgba(156,163,175,.25)}
+.rel-depends_on{background:rgba(251,146,60,.12);color:#fdba74;border-color:rgba(251,146,60,.25)}
+.rel-contradicts{background:rgba(248,113,113,.15);color:#f87171;border-color:rgba(248,113,113,.3)}
+.rel-abstracts{background:rgba(129,140,248,.12);color:#a5b4fc;border-color:rgba(129,140,248,.25)}
+.rel-implements{background:rgba(52,211,153,.12);color:#6ee7b7;border-color:rgba(52,211,153,.25)}
+.rel-derives_from{background:rgba(167,139,250,.12);color:#c4b5fd;border-color:rgba(167,139,250,.25)}
+.rel-replaces{background:rgba(251,191,36,.12);color:#fcd34d;border-color:rgba(251,191,36,.25)}
+.rel-documents{background:rgba(56,189,248,.12);color:#7dd3fc;border-color:rgba(56,189,248,.25)}
+.rel-explains{background:rgba(108,108,240,.12);color:#a5a5f0;border-color:rgba(108,108,240,.25)}
+.rel-caused_by{background:rgba(244,114,182,.12);color:#f9a8d4;border-color:rgba(244,114,182,.25)}
+.rel-related_to{background:rgba(156,163,175,.12);color:#9ca3af;border-color:rgba(156,163,175,.25)}
+.rel-loading{background:var(--surface2);color:var(--text3);border-color:var(--border);cursor:default}
+
 /* Inline edit form */
 .edit-form{background:var(--surface);border:1px solid var(--accent);border-radius:var(--radius);padding:16px;margin-top:12px}
 .edit-form .field-row{display:flex;align-items:center;gap:10px;margin:8px 0}
@@ -457,9 +474,11 @@ function renderDetail(d){
     if(sc)h+='<div class="detail-card"><h4>📂 范围</h4><div class="card-body">'+sc+'</div></div>';
   }
   if(d.relations){
-    var keys=Object.keys(d.relations).filter(function(k){return d.relations[k]&&d.relations[k].length});
-    if(keys.length)h+='<div class="detail-card"><h4>🔗 关联</h4><div class="card-body">'+keys.map(function(k){return'<strong>'+esc(k)+'：</strong>'+d.relations[k].map(esc).join(', ')}).join('<br>')+'</div></div>';
+    var relPlaceholder='<div class="detail-card"><h4>🔗 关联</h4><div class="card-body"><span class="rel-loading rel-badge" style="cursor:default">⏳ 加载关系中...</span></div></div>';
+    h+=relPlaceholder;
   }
+  // Fetch relations data asynchronously
+  if(d.id)setTimeout(function(){loadRelations(d.id)},10);
   h+='<div class="action-bar">'+
     '<button onclick="markStatus(\'active\')">✓ 有效</button>'+
     '<button onclick="markStatus(\'stale\')">⚠ 过时</button>'+
@@ -507,6 +526,82 @@ function decayClass(c){
   if(r>=0.99)return'fresh';
   if(r>=0.6)return'warm';
   return'stale';
+}
+
+// ===== Relations =====
+var relLabels={
+  supersedes:'替代', superseded_by:'被替代', depends_on:'依赖', contradicts:'矛盾',
+  abstracts:'抽象', implements:'实现', derives_from:'派生', replaces:'取代',
+  documents:'文档', explains:'解释', caused_by:'因果', related_to:'关联'
+};
+var relIcons={
+  supersedes:'🔄', superseded_by:'⬅️', depends_on:'📎', contradicts:'⚡',
+  abstracts:'🔝', implements:'⚙️', derives_from:'🌿', replaces:'🔄',
+  documents:'📄', explains:'💡', caused_by:'⬅️', related_to:'🔗'
+};
+
+function loadRelations(id){
+  api('/api/relations?id='+encodeURIComponent(id)+'&direction=both').then(function(d){
+    var h='';
+    var titles=d.card_titles||{};
+    var outgoing=d.outgoing||{};
+    var incoming=d.incoming||{};
+
+    // Outgoing
+    var outKeys=Object.keys(outgoing).filter(function(k){return outgoing[k]&&outgoing[k].length});
+    if(outKeys.length){
+      h+='<div style="margin-bottom:10px"><strong style="font-size:11px;color:var(--text3)">📤 出向关系</strong></div>';
+      h+='<div class="tags-row" style="margin-bottom:8px">';
+      outKeys.forEach(function(k){
+        outgoing[k].forEach(function(tid){
+          var title=titles[tid]||tid;
+          var label=relLabels[k]||k;
+          var icon=relIcons[k]||'';
+          h+='<span class="rel-badge rel-'+k+'" onclick="event.stopPropagation();showDetail(\''+escAttr(tid)+'\')" title="'+escAttr(k)+': '+escAttr(title)+'">'+icon+' '+label+' → '+esc(title)+'</span>';
+        });
+      });
+      h+='</div>';
+    }
+
+    // Incoming
+    var inKeys=Object.keys(incoming).filter(function(k){return incoming[k]&&incoming[k].length});
+    if(inKeys.length){
+      h+='<div style="margin-bottom:10px"><strong style="font-size:11px;color:var(--text3)">📥 入向关系</strong></div>';
+      h+='<div class="tags-row">';
+      inKeys.forEach(function(k){
+        incoming[k].forEach(function(sid){
+          var title=titles[sid]||sid;
+          var label=relLabels[k]||k;
+          var icon=relIcons[k]||'';
+          h+='<span class="rel-badge rel-'+k+'" onclick="event.stopPropagation();showDetail(\''+escAttr(sid)+'\')" title="'+escAttr(k)+': '+escAttr(title)+'">'+icon+' '+label+' ← '+esc(title)+'</span>';
+        });
+      });
+      h+='</div>';
+    }
+
+    if(!h){
+      h='<span style="color:var(--text3);font-size:12px">无关联卡片</span>';
+    }
+
+    // Find and replace the relations card
+    var cards=document.querySelectorAll('.detail-card h4');
+    for(var i=0;i<cards.length;i++){
+      if(cards[i].textContent.indexOf('🔗 关联')>=0){
+        var cardBody=cards[i].nextElementSibling;
+        if(cardBody)cardBody.innerHTML=h;
+        break;
+      }
+    }
+  }).catch(function(){
+    var cards=document.querySelectorAll('.detail-card h4');
+    for(var i=0;i<cards.length;i++){
+      if(cards[i].textContent.indexOf('🔗 关联')>=0){
+        var cardBody=cards[i].nextElementSibling;
+        if(cardBody)cardBody.innerHTML='<span style="color:var(--red);font-size:12px">加载关系失败</span>';
+        break;
+      }
+    }
+  });
 }
 
 
