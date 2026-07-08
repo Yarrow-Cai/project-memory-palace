@@ -71,7 +71,7 @@ func TestRecent(t *testing.T) {
 		card, _ := store.ReadCard(filepath.Join(store.CardsDir(dir), "2026-06-09_00" + string(rune('0'+i+1)) + "_decision.yaml"))
 		idx.Upsert(card)
 	}
-	results, _ := idx.Recent(2)
+	results, _ := idx.Recent(2, 0, nil)
 	if len(results) != 2 { t.Fatalf("expected 2 recent, got %d", len(results)) }
 }
 
@@ -92,6 +92,6 @@ func TestClear(t *testing.T) {
 	card, _ := store.ReadCard(filepath.Join(store.CardsDir(dir), "2026-06-09_001_decision.yaml"))
 	idx.Upsert(card)
 	idx.Clear()
-	results, _ := idx.Recent(10)
+	results, _ := idx.Recent(10, 0, nil)
 	if len(results) != 0 { t.Fatal("expected 0 results after clear") }
 }

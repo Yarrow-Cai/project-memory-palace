@@ -122,7 +122,7 @@ func TestListRecent(t *testing.T) {
 		}
 	}
 
-	results, err := svc.ListRecent(5)
+	results, err := svc.ListRecent(5, 0, nil)
 	if err != nil {
 		t.Fatalf("ListRecent: %v", err)
 	}

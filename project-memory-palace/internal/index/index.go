@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS memory_paths (
 `
 
 // cjkBigram converts a CJK string into space-separated bigrams for FTS indexing.
-// "逆变器" → "逆变 变器"；单/双字直接返回原串
+// "閫嗗彉鍣? 鈫?"閫嗗彉 鍙樺櫒"锛涘崟/鍙屽瓧鐩存帴杩斿洖鍘熶覆
 func cjkBigram(s string) string {
 	runes := []rune(s)
 	if len(runes) <= 2 {
@@ -123,6 +123,8 @@ func (idx *MemoryIndex) Initialize() error {
 	db.Exec("ALTER TABLE memories ADD COLUMN priority INTEGER NOT NULL DEFAULT 3")
 	// Migration: add expires_at column if missing (added in schema v3)
 	db.Exec("ALTER TABLE memories ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''")
+	// Auto-expire cards with past expires_at
+	db.Exec("UPDATE memories SET status='expired' WHERE status='active' AND expires_at != '' AND expires_at <= datetime('now')")
 	return nil
 }
 
@@ -193,7 +195,7 @@ func (idx *MemoryIndex) Delete(id string) error {
 	return tx.Commit()
 }
 
-// ListExpired returns memory IDs whose status is 'expired' — for purge.
+// ListExpired returns memory IDs whose status is 'expired' 鈥?for purge.
 func (idx *MemoryIndex) ListExpired() ([]string, error) {
 	if err := idx.Initialize(); err != nil { return nil, err }
 	db, err := idx.connect()
@@ -242,6 +244,7 @@ func (idx *MemoryIndex) Search(query string, filters map[string]any, limit int) 
 		pp := strings.TrimSuffix(strings.Repeat("?,", len(pathFilters)), ",")
 		where += " AND EXISTS(SELECT 1 FROM memory_paths mp WHERE mp.memory_id=m.id AND mp.path IN (" + pp + "))"
 	}
+	where += " AND (m.expires_at = '' OR m.expires_at > datetime('now'))"
 	q := fmt.Sprintf("SELECT m.id,m.type,m.status,m.title,m.summary,m.source_kind,m.confidence,m.updated_at FROM memory_fts JOIN memories m ON m.id=memory_fts.id WHERE memory_fts MATCH ? AND %s ORDER BY rank ASC,m.updated_at DESC LIMIT ?", where)
 	rows, err := db.Query(q, args...)
 	if err != nil { return nil, fmt.Errorf("search: %w", err) }
@@ -284,6 +287,8 @@ func (idx *MemoryIndex) Recent(limit, offset int, filters map[string]any) ([]map
 	if !hasStatusFilter {
 		where += " AND status != 'expired'"
 	}
+	// Always filter out time-expired cards
+	where += " AND (expires_at = '' OR expires_at > datetime('now'))"
 	query := "SELECT id,type,status,priority,title,summary,source_kind,confidence,updated_at FROM memories WHERE 1=1" + where + " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 	rows, err := db.Query(query, args...)
@@ -321,10 +326,67 @@ func (idx *MemoryIndex) Count(filters map[string]any) (int, error) {
 			args = append(args, pr)
 		}
 	}
+	// Always exclude time-expired cards
+	where += " AND (expires_at = '' OR expires_at > datetime('now'))"
 	var count int
 	err = db.QueryRow("SELECT COUNT(*) FROM memories WHERE 1=1"+where, args...).Scan(&count)
 	if err != nil { return 0, fmt.Errorf("count: %w", err) }
 	return count, nil
+}
+
+// GetMemory looks up a single memory card by ID from the SQLite index.
+// Returns a structured map (without content field) or nil if not found.
+func (idx *MemoryIndex) GetMemory(id string) (map[string]any, error) {
+	if err := idx.Initialize(); err != nil { return nil, err }
+	db, err := idx.connect()
+	if err != nil { return nil, err }
+
+	var (
+		dbID, tp, st, title, summary, sk        string
+		tagsJSON, modsJSON, pathsJSON, expires, upd string
+		conf     float64
+		priority int
+	)
+	err = db.QueryRow(
+		"SELECT id,type,status,title,summary,source_kind,confidence,priority,tags_json,modules_json,paths_json,expires_at,updated_at FROM memories WHERE id=?", id,
+	).Scan(&dbID, &tp, &st, &title, &summary, &sk, &conf, &priority, &tagsJSON, &modsJSON, &pathsJSON, &expires, &upd)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get memory: %w", err)
+	}
+
+	var tags, mods, paths []string
+	json.Unmarshal([]byte(tagsJSON), &tags)
+	json.Unmarshal([]byte(modsJSON), &mods)
+	json.Unmarshal([]byte(pathsJSON), &paths)
+
+	return map[string]any{
+		"id": dbID, "type": tp, "status": st,
+		"title": title, "summary": summary,
+		"source_hint": sk,
+		"confidence": conf, "priority": priority,
+		"tags": tags, "modules": mods, "paths": paths,
+		"expires_at": expires, "updated_at": upd,
+	}, nil
+}
+
+// FindReferrers returns all memory IDs that have a relation pointing to the given target.
+func (idx *MemoryIndex) FindReferrers(targetID string) ([]string, error) {
+	if err := idx.Initialize(); err != nil { return nil, err }
+	db, err := idx.connect()
+	if err != nil { return nil, err }
+	rows, err := db.Query("SELECT source_id FROM relations WHERE target_id=?", targetID)
+	if err != nil { return nil, fmt.Errorf("find referrers: %w", err) }
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil { return nil, err }
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (idx *MemoryIndex) Rebuild() error {

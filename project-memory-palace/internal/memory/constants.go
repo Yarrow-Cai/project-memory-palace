@@ -1,5 +1,7 @@
 ﻿package memory
 
+import "sort"
+
 var MemoryTypes = map[string]bool{
 	"project_goal": true, "design": true, "decision": true,
 	"change_reason": true, "bugfix": true, "module": true,
@@ -41,4 +43,15 @@ var RememberRequiredFields = []string{"content", "summary", "title", "type"}
 var UpdateAllowedFields = map[string]bool{
 	"confidence": true, "reason": true, "relations": true,
 	"status": true, "tags": true, "expires_at": true,
+}
+
+// sortedKeys returns the sorted keys of a map[string]bool.
+// Used by MCP tool schema generation for stable enum ordering.
+func SortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
