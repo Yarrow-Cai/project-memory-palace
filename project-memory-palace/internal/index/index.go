@@ -435,7 +435,8 @@ func (idx *MemoryIndex) GetMemory(id string) (map[string]any, error) {
 		"tags": tags, "modules": mods, "paths": paths,
 		"expires_at": expires, "updated_at": upd,
 		"access_count": accessCount, "last_accessed_at": lastAccessedAt,
-		"source_agent": sourceAgent, "knowledge_kind": knowledgeKind,
+"source_agent": sourceAgent, "knowledge_kind": knowledgeKind,
+		"relations": map[string][]string{},
 	}, nil
 }
 
@@ -471,6 +472,45 @@ func (idx *MemoryIndex) GetRelations(sourceID string) (map[string][]string, erro
 		result[rel] = append(result[rel], target)
 	}
 	return result, rows.Err()
+}
+
+func (idx *MemoryIndex) DecayAnalysis(limit int) ([]map[string]any, error) {
+	if err := idx.Initialize(); err != nil { return nil, err }
+	if limit <= 0 { limit = 50 }
+	db, err := idx.connect()
+	if err != nil { return nil, err }
+	q := "SELECT id,type,status,title,summary,priority,access_count,last_accessed_at,updated_at," +
+		"CAST(priority AS REAL)*CASE WHEN last_accessed_at IS NULL OR last_accessed_at='' THEN 0.25" +
+		" WHEN julianday('now')-julianday(last_accessed_at)<7 THEN 1.0" +
+		" WHEN julianday('now')-julianday(last_accessed_at)<30 THEN 0.85" +
+		" WHEN julianday('now')-julianday(last_accessed_at)<60 THEN 0.6" +
+		" WHEN julianday('now')-julianday(last_accessed_at)<180 THEN 0.4" +
+		" ELSE 0.25 END AS effective_priority," +
+		" CAST(julianday('now')-julianday(last_accessed_at) AS INTEGER) AS days_since_access" +
+		" FROM memories WHERE status='active' AND (expires_at='' OR expires_at>datetime('now'))" +
+		" ORDER BY effective_priority ASC LIMIT ?"
+	rows, err := db.Query(q, limit)
+	if err != nil { return nil, fmt.Errorf("decay: %w", err) }
+	defer rows.Close()
+	var results []map[string]any
+	for rows.Next() {
+		var id, tp, st, title, summary, lastAcc, upd string
+		var priority, accessCount int
+		var ep float64
+		var daysSince sql.NullInt64
+		if err := rows.Scan(&id,&tp,&st,&title,&summary,&priority,&accessCount,&lastAcc,&upd,&ep,&daysSince); err != nil {
+			return nil, fmt.Errorf("decay scan: %w", err)
+		}
+		days := int64(0)
+		if daysSince.Valid { days = daysSince.Int64 }
+		results = append(results, map[string]any{
+			"id":id,"type":tp,"status":st,"title":title,"summary":summary,
+			"priority":priority,"effective_priority":ep,
+			"access_count":accessCount,"last_accessed_at":lastAcc,
+			"days_since_access":days,"updated_at":upd,
+		})
+	}
+	return results, rows.Err()
 }
 
 func (idx *MemoryIndex) Rebuild() error {

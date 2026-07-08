@@ -536,6 +536,11 @@ func extractIDs(results []map[string]any) []string {
 	return ids
 }
 
+func (s *MemoryService) DecayMemories(limit int) ([]map[string]any, error) {
+	if err := s.InitProject(); err != nil { return nil, err }
+	return s.idx.DecayAnalysis(limit)
+}
+
 func has(slice []string, item string) bool {
 	for _, s := range slice { if s == item { return true } }
 	return false

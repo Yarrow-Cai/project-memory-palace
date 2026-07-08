@@ -2,11 +2,12 @@ package service
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
-	"log"
 	"sort"
 	"strings"
+	"time"
 )
 
 // WorkspaceService manages multiple project MemoryServices within a workspace
@@ -133,13 +134,28 @@ func (ws *WorkspaceService) RecallAll(query string, filters map[string]any, limi
 			all = append(all, r)
 		}
 	}
-	// Sort by priority DESC, then updated_at DESC
+	// Sort by effective priority (decay-aware), then updated_at DESC
+	computeEffective := func(priority int, lastAccessedAt string) float64 {
+		if lastAccessedAt == "" { return float64(priority) }
+		t, err := time.Parse(time.RFC3339, lastAccessedAt)
+		if err != nil { return float64(priority) }
+		days := time.Since(t).Hours() / 24
+		switch {
+		case days < 7:   return float64(priority) * 1.0
+		case days < 30:  return float64(priority) * 0.85
+		case days < 60:  return float64(priority) * 0.6
+		case days < 180: return float64(priority) * 0.4
+		default:         return float64(priority) * 0.25
+		}
+	}
 	sort.Slice(all, func(i, j int) bool {
 		pi, _ := all[i]["priority"].(int)
 		pj, _ := all[j]["priority"].(int)
-		if pi != pj {
-			return pi > pj
-		}
+		lai, _ := all[i]["last_accessed_at"].(string)
+		laj, _ := all[j]["last_accessed_at"].(string)
+		epi := computeEffective(pi, lai)
+		epj := computeEffective(pj, laj)
+		if epi != epj { return epi > epj }
 		ui, _ := all[i]["updated_at"].(string)
 		uj, _ := all[j]["updated_at"].(string)
 		return ui > uj

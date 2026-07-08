@@ -350,10 +350,11 @@ func cmdServeWeb(args []string) int {
 		results, err := svc.HotMemories(limit)
 		writeWebJSONList(w, results, err)
 	})
-	http.HandleFunc("/api/decay", func(w http.ResponseWriter, r *http.Request) {
+http.HandleFunc("/api/decay", func(w http.ResponseWriter, r *http.Request) {
 		svc, _, err := ws.Resolve("")
 		if err != nil { writeWebJSONList(w, nil, err); return }
-		results, err := svc.ListRecent(1000, 0, map[string]any{"status": "active"})
+		limit := service.ParseIntParam(r.URL.Query().Get("limit"), 50)
+		results, err := svc.DecayMemories(limit)
 		writeWebJSONList(w, results, err)
 	})
 	http.HandleFunc("/api/open", func(w http.ResponseWriter, r *http.Request) {
@@ -462,9 +463,13 @@ func cmdServeWeb(args []string) int {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"removed": root, "recents": tray.RecentList()})
 	})
-	http.HandleFunc("/api/project", func(w http.ResponseWriter, r *http.Request) {
+http.HandleFunc("/api/project", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"root": projectRoot, "recents": tray.RecentList()})
+	})
+	http.HandleFunc("/api/projects", func(w http.ResponseWriter, r *http.Request) {
+		projects, err := ws.ListProjects()
+		writeWebJSONList(w, projects, err)
 	})
 	http.HandleFunc("/api/project/set", func(w http.ResponseWriter, r *http.Request) {
 		newRoot := r.URL.Query().Get("root")

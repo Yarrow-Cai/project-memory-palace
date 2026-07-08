@@ -232,13 +232,15 @@ func startAPI() {
 	http.HandleFunc("/api/search", handleSearch)
 	http.HandleFunc("/api/open", handleOpen)
 	http.HandleFunc("/api/update", handleUpdate)
-	http.HandleFunc("/api/project", handleProject)
+http.HandleFunc("/api/project", handleProject)
+	http.HandleFunc("/api/projects", handleProjects)
 	http.HandleFunc("/api/project/set", handleProjectSet)
 	http.HandleFunc("/api/project/remove", handleProjectRemove)
 	http.HandleFunc("/api/projects/recent", handleRecents)
 	http.HandleFunc("/api/rules", handleRules)
 	http.HandleFunc("/api/count", handleCount)
-	http.HandleFunc("/api/disclosure", handleDisclosure)
+http.HandleFunc("/api/disclosure", handleDisclosure)
+	http.HandleFunc("/api/decay", handleDecay)
 	http.HandleFunc("/api/workspace/refresh", handleWorkspaceRefresh)
 	http.HandleFunc("/api/vacuum", handleVacuum)
 	http.HandleFunc("/api/relations", handleRelations)
@@ -406,6 +408,19 @@ func handleDisclosure(w http.ResponseWriter, r *http.Request) {
 	mode := r.URL.Query().Get("mode")
 	since := r.URL.Query().Get("since")
 	results, err := svc.Disclosure(mode, since)
+	writeWebJSONList(w, results, err)
+}
+
+func handleProjects(w http.ResponseWriter, r *http.Request) {
+	mu.Lock(); defer mu.Unlock()
+	projects, err := ws.ListProjects()
+	writeWebJSONList(w, projects, err)
+}
+
+func handleDecay(w http.ResponseWriter, r *http.Request) {
+	mu.Lock(); defer mu.Unlock()
+	limit := service.ParseIntParam(r.URL.Query().Get("limit"), 50)
+	results, err := svc.DecayMemories(limit)
 	writeWebJSONList(w, results, err)
 }
 
