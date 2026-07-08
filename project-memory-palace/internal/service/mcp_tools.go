@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/atop/project-memory-palace/internal/audit"
 	"github.com/atop/project-memory-palace/internal/mcp"
 	"github.com/atop/project-memory-palace/internal/memory"
 	"github.com/atop/project-memory-palace/internal/store"
@@ -517,6 +518,28 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		if v, ok := params["limit"].(float64); ok { limit = int(v) }
 		results, err := ws.RecallAll(query, filters, limit)
 		if err != nil { return nil, err }
-		return map[string]any{"results": results, "searched_projects": len(ws.projects)}, nil
+	return map[string]any{"results": results, "searched_projects": len(ws.projects)}, nil
+	}))
+
+	// 14. audit_project
+	reg.Register("audit_project", "审计指定工程的所有记忆卡片，检测低置信度、缺失标签/范围、高置信度推理、疑似重复、过期卡片、多Agent冲突等问题。", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"project": projectProp,
+		},
+	}, wrap(func(params map[string]any) (any, error) {
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil {
+			return nil, err
+		}
+		report, err := audit.AuditProject(svc.ProjectRoot())
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"issues":      report,
+			"issue_count": len(report),
+			"project":     svc.ProjectRoot(),
+		}, nil
 	}))
 }
