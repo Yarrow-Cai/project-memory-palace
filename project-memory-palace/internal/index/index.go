@@ -1,4 +1,4 @@
-﻿package index
+package index
 
 import (
 	"database/sql"
@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/atop/project-memory-palace/internal/memory"
 	"github.com/atop/project-memory-palace/internal/store"
@@ -39,7 +40,7 @@ CREATE TABLE IF NOT EXISTS memory_paths (
 `
 
 // cjkBigram converts a CJK string into space-separated bigrams for FTS indexing.
-// "閫嗗彉鍣? 鈫?"閫嗗彉 鍙樺櫒"锛涘崟/鍙屽瓧鐩存帴杩斿洖鍘熶覆
+// "inverter" -> inverted bigram; single/double char passes through
 func cjkBigram(s string) string {
 	runes := []rune(s)
 	if len(runes) <= 2 {
@@ -123,6 +124,9 @@ func (idx *MemoryIndex) Initialize() error {
 	db.Exec("ALTER TABLE memories ADD COLUMN priority INTEGER NOT NULL DEFAULT 3")
 	// Migration: add expires_at column if missing (added in schema v3)
 	db.Exec("ALTER TABLE memories ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''")
+	// Migration: add access_count and last_accessed_at columns (added in schema v4)
+	db.Exec("ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE memories ADD COLUMN last_accessed_at TEXT NOT NULL DEFAULT ''")
 	// Auto-expire cards with past expires_at
 	db.Exec("UPDATE memories SET status='expired' WHERE status='active' AND expires_at != '' AND expires_at <= datetime('now')")
 	return nil
@@ -195,7 +199,7 @@ func (idx *MemoryIndex) Delete(id string) error {
 	return tx.Commit()
 }
 
-// ListExpired returns memory IDs whose status is 'expired' 鈥?for purge.
+// ListExpired returns memory IDs whose status is expired - for purge.
 func (idx *MemoryIndex) ListExpired() ([]string, error) {
 	if err := idx.Initialize(); err != nil { return nil, err }
 	db, err := idx.connect()
@@ -245,16 +249,17 @@ func (idx *MemoryIndex) Search(query string, filters map[string]any, limit int) 
 		where += " AND EXISTS(SELECT 1 FROM memory_paths mp WHERE mp.memory_id=m.id AND mp.path IN (" + pp + "))"
 	}
 	where += " AND (m.expires_at = '' OR m.expires_at > datetime('now'))"
-	q := fmt.Sprintf("SELECT m.id,m.type,m.status,m.title,m.summary,m.source_kind,m.confidence,m.updated_at FROM memory_fts JOIN memories m ON m.id=memory_fts.id WHERE memory_fts MATCH ? AND %s ORDER BY rank ASC,m.updated_at DESC LIMIT ?", where)
+	q := fmt.Sprintf("SELECT m.id,m.type,m.status,m.title,m.summary,m.source_kind,m.confidence,m.updated_at,m.access_count,m.last_accessed_at FROM memory_fts JOIN memories m ON m.id=memory_fts.id WHERE memory_fts MATCH ? AND %s ORDER BY rank ASC,m.updated_at DESC LIMIT ?", where)
 	rows, err := db.Query(q, args...)
 	if err != nil { return nil, fmt.Errorf("search: %w", err) }
 	defer rows.Close()
 	var results []map[string]any
 	for rows.Next() {
-		var id, tp, st, title, summary, sk, upd string
+		var id, tp, st, title, summary, sk, upd, lastAcc string
 		var conf float64
-		rows.Scan(&id,&tp,&st,&title,&summary,&sk,&conf,&upd)
-		results = append(results, map[string]any{"id":id,"type":tp,"status":st,"title":title,"summary":summary,"confidence":conf,"source_hint":sk,"matched_by":[]string{"fts"},"updated_at":upd})
+		var accessCount int
+		rows.Scan(&id,&tp,&st,&title,&summary,&sk,&conf,&upd,&accessCount,&lastAcc)
+		results = append(results, map[string]any{"id":id,"type":tp,"status":st,"title":title,"summary":summary,"confidence":conf,"source_hint":sk,"matched_by":[]string{"fts"},"updated_at":upd,"access_count":accessCount,"last_accessed_at":lastAcc})
 	}
 	return results, rows.Err()
 }
@@ -289,18 +294,19 @@ func (idx *MemoryIndex) Recent(limit, offset int, filters map[string]any) ([]map
 	}
 	// Always filter out time-expired cards
 	where += " AND (expires_at = '' OR expires_at > datetime('now'))"
-	query := "SELECT id,type,status,priority,title,summary,source_kind,confidence,updated_at FROM memories WHERE 1=1" + where + " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+	query := "SELECT id,type,status,priority,title,summary,source_kind,confidence,updated_at,access_count,last_accessed_at FROM memories WHERE 1=1" + where + " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 	rows, err := db.Query(query, args...)
 	if err != nil { return nil, fmt.Errorf("recent: %w", err) }
 	defer rows.Close()
 	var results []map[string]any
 	for rows.Next() {
-		var id, tp, st, title, summary, sk, upd string
+		var id, tp, st, title, summary, sk, upd, lastAcc string
 		var priority int
 		var conf float64
-		rows.Scan(&id,&tp,&st,&priority,&title,&summary,&sk,&conf,&upd)
-		results = append(results, map[string]any{"id":id,"type":tp,"status":st,"priority":priority,"title":title,"summary":summary,"confidence":conf,"source_hint":sk,"matched_by":[]string{"recent"},"updated_at":upd})
+		var accessCount int
+		rows.Scan(&id,&tp,&st,&priority,&title,&summary,&sk,&conf,&upd,&accessCount,&lastAcc)
+		results = append(results, map[string]any{"id":id,"type":tp,"status":st,"priority":priority,"title":title,"summary":summary,"confidence":conf,"source_hint":sk,"matched_by":[]string{"recent"},"updated_at":upd,"access_count":accessCount,"last_accessed_at":lastAcc})
 	}
 	return results, rows.Err()
 }
@@ -403,6 +409,88 @@ func (idx *MemoryIndex) Rebuild() error {
 		if err := doUpsert(tx, c); err != nil { return fmt.Errorf("rebuild %s: %w", c.ID, err) }
 	}
 	return tx.Commit()
+}
+
+func (idx *MemoryIndex) SearchByPaths(paths []string, limit int) ([]map[string]any, error) {
+	if err := idx.Initialize(); err != nil { return nil, err }
+	if limit <= 0 { limit = 20 }
+	db, err := idx.connect()
+	if err != nil { return nil, err }
+
+	args := []any{}
+	conditions := []string{}
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" { continue }
+		conditions = append(conditions,
+			"EXISTS(SELECT 1 FROM memory_paths mp WHERE mp.memory_id=m.id AND (mp.path LIKE '%' || ? OR ? LIKE '%' || mp.path))")
+		args = append(args, p, p)
+	}
+	if len(conditions) == 0 { return nil, nil }
+
+	q := "SELECT DISTINCT m.id,m.type,m.status,m.title,m.summary,m.source_kind,m.confidence,m.priority,m.updated_at" +
+		" FROM memories m" +
+		" WHERE m.status='active'" +
+		" AND (m.expires_at = '' OR m.expires_at > datetime('now'))" +
+		" AND (" + strings.Join(conditions, " OR ") + ")" +
+		" ORDER BY m.priority DESC, m.updated_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.Query(q, args...)
+	if err != nil { return nil, fmt.Errorf("search_by_paths: %w", err) }
+	defer rows.Close()
+
+	var results []map[string]any
+	for rows.Next() {
+		var id, tp, st, title, summary, sk, upd string
+		var conf float64
+		var priority int
+		rows.Scan(&id, &tp, &st, &title, &summary, &sk, &conf, &priority, &upd)
+		results = append(results, map[string]any{"id": id, "type": tp, "status": st, "title": title, "summary": summary, "confidence": conf, "priority": priority, "source_hint": sk, "matched_by": []string{"paths"}, "updated_at": upd})
+	}
+	return results, rows.Err()
+}
+
+// RecordAccess increments access_count and updates last_accessed_at for the given memory IDs.
+func (idx *MemoryIndex) RecordAccess(ids []string) error {
+	if len(ids) == 0 { return nil }
+	db, err := idx.connect()
+	if err != nil { return err }
+	now := time.Now().Format(time.RFC3339)
+	placeholders := make([]string, len(ids))
+	for i := range placeholders { placeholders[i] = "?" }
+	q := "UPDATE memories SET access_count = access_count + 1, last_accessed_at = ? WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	args := append([]any{now}, toAnySlice(ids)...)
+	_, err = db.Exec(q, args...)
+	return err
+}
+
+func toAnySlice(ss []string) []any {
+	result := make([]any, len(ss))
+	for i, s := range ss { result[i] = s }
+	return result
+}
+
+// HotMemories returns active memories ordered by access_count DESC.
+func (idx *MemoryIndex) HotMemories(limit int) ([]map[string]any, error) {
+	if err := idx.Initialize(); err != nil { return nil, err }
+	db, err := idx.connect()
+	if err != nil { return nil, err }
+	if limit <= 0 { limit = 20 }
+	q := "SELECT id,type,status,priority,title,summary,source_kind,confidence,updated_at,access_count,last_accessed_at FROM memories WHERE status='active' AND access_count > 0 AND (expires_at = '' OR expires_at > datetime('now')) ORDER BY access_count DESC LIMIT ?"
+	rows, err := db.Query(q, limit)
+	if err != nil { return nil, fmt.Errorf("hot: %w", err) }
+	defer rows.Close()
+	var results []map[string]any
+	for rows.Next() {
+		var id, tp, st, title, summary, sk, upd, lastAcc string
+		var priority int
+		var conf float64
+		var accessCount int
+		rows.Scan(&id, &tp, &st, &priority, &title, &summary, &sk, &conf, &upd, &accessCount, &lastAcc)
+		results = append(results, map[string]any{"id": id, "type": tp, "status": st, "priority": priority, "title": title, "summary": summary, "confidence": conf, "source_hint": sk, "matched_by": []string{"hot"}, "updated_at": upd, "access_count": accessCount, "last_accessed_at": lastAcc})
+	}
+	return results, rows.Err()
 }
 
 func toFTSQuery(query string) string {

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/atop/project-memory-palace/internal/audit"
 	"github.com/atop/project-memory-palace/internal/mcp"
@@ -339,6 +340,19 @@ func cmdServeWeb(args []string) int {
 		q := r.URL.Query().Get("q")
 		if q == "" { writeWebJSONList(w, nil, nil); return }
 		results, err := svc.Recall(q, nil, 30)
+		writeWebJSONList(w, results, err)
+	})
+	http.HandleFunc("/api/context", func(w http.ResponseWriter, r *http.Request) {
+		pathStr := r.URL.Query().Get("paths")
+		if pathStr == "" { writeWebJSONList(w, nil, nil); return }
+		paths := strings.Split(pathStr, ",")
+		limit := service.ParseIntParam(r.URL.Query().Get("limit"), 20)
+		results, err := svc.ContextForFiles(paths, limit)
+		writeWebJSONList(w, results, err)
+	})
+	http.HandleFunc("/api/hot", func(w http.ResponseWriter, r *http.Request) {
+		limit := service.ParseIntParam(r.URL.Query().Get("limit"), 20)
+		results, err := svc.HotMemories(limit)
 		writeWebJSONList(w, results, err)
 	})
 	http.HandleFunc("/api/open", func(w http.ResponseWriter, r *http.Request) {

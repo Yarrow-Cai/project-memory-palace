@@ -369,7 +369,7 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 				continue
 			}
 			upd, _ := c["updated_at"].(string)
-			if upd > since {
+			if IsAfterTime(upd, since) {
 				newCards = append(newCards, map[string]any{
 					"id":    c["id"],
 					"type":  tp,
@@ -391,5 +391,29 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 			result["message"] = "Rules are up to date"
 		}
 		return result, nil
+	}))
+	// 11. context_for_files
+	reg.Register("context_for_files", "获取与指定文件关联的活跃记忆。传入当前编辑的文件路径，系统自动返回相关 conventions/decisions/已知问题。", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"paths": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "文件路径列表",
+			},
+			"limit": map[string]any{
+				"type":        "integer",
+				"description": "返回结果数量上限",
+			},
+		},
+		"required": []string{"paths"},
+	}, wrap(func(params map[string]any) (any, error) {
+		paths := toStringSlice(params["paths"])
+		if len(paths) == 0 { return map[string]any{"results": []map[string]any{}, "matched_files": 0}, nil }
+		limit := 20
+		if v, ok := params["limit"].(float64); ok { limit = int(v) }
+		results, err := svc.ContextForFiles(paths, limit)
+		if err != nil { return nil, err }
+		return map[string]any{"results": results, "matched_files": len(paths)}, nil
 	}))
 }

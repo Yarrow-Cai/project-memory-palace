@@ -50,7 +50,6 @@ func (s *MemoryService) Remember(payload map[string]any) (map[string]any, error)
 		path, err := store.WriteCard(s.projectRoot, &card, false)
 		if err != nil { lastErr = err; continue }
 		if err := s.idx.Upsert(&card); err != nil { store.RemoveCard(path); return nil, fmt.Errorf("remember: index error: %w", err) }
-		_, _ = s.SynthesizeRules()
 		result := cardToMap(&card)
 		result["path"] = path
 		result["notification"] = buildNotification(&card)
@@ -61,7 +60,12 @@ func (s *MemoryService) Remember(payload map[string]any) (map[string]any, error)
 
 func (s *MemoryService) Recall(query string, filters map[string]any, limit int) ([]map[string]any, error) {
 	if err := s.InitProject(); err != nil { return nil, err }
-	return s.idx.Search(query, filters, limit)
+	results, err := s.idx.Search(query, filters, limit)
+	if err != nil { return nil, err }
+	if len(results) > 0 {
+		_ = s.idx.RecordAccess(extractIDs(results))
+	}
+	return results, nil
 }
 
 func (s *MemoryService) OpenMemory(memoryID string) (map[string]any, error) {
@@ -83,12 +87,19 @@ func (s *MemoryService) OpenMemory(memoryID string) (map[string]any, error) {
 	if err != nil {
 		return nil, &MemoryNotFoundError{ID: memoryID}
 	}
-	return cardToMap(cardObj), nil
+	result := cardToMap(cardObj)
+	_ = s.idx.RecordAccess([]string{cardObj.ID})
+	return result, nil
 }
 
 func (s *MemoryService) ListRecent(limit, offset int, filters map[string]any) ([]map[string]any, error) {
 	if err := s.InitProject(); err != nil { return nil, err }
-	return s.idx.Recent(limit, offset, filters)
+	results, err := s.idx.Recent(limit, offset, filters)
+	if err != nil { return nil, err }
+	if len(results) > 0 {
+		_ = s.idx.RecordAccess(extractIDs(results))
+	}
+	return results, nil
 }
 
 func (s *MemoryService) Count(filters map[string]any) (int, error) {
@@ -174,6 +185,28 @@ func (s *MemoryService) PurgeExpired() (map[string]any, error) {
 
 func (s *MemoryService) SynthesizeRules() (*rule.RulesDocument, error) {
 	return rule.Synthesize(s.projectRoot)
+}
+
+// ContextForFiles returns memories associated with the given file paths.
+func (s *MemoryService) ContextForFiles(paths []string, limit int) ([]map[string]any, error) {
+	if err := s.InitProject(); err != nil { return nil, err }
+	return s.idx.SearchByPaths(paths, limit)
+}
+
+// HotMemories returns active memories sorted by access count descending.
+func (s *MemoryService) HotMemories(limit int) ([]map[string]any, error) {
+	if err := s.InitProject(); err != nil { return nil, err }
+	return s.idx.HotMemories(limit)
+}
+
+func extractIDs(results []map[string]any) []string {
+	ids := make([]string, 0, len(results))
+	for _, r := range results {
+		if id, ok := r["id"].(string); ok && id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func has(slice []string, item string) bool {
