@@ -408,6 +408,19 @@ func cmdServeWeb(args []string) int {
 		result, err := svc.PurgeExpired()
 		writeWebJSONRaw(w, result, err)
 	})
+	http.HandleFunc("/api/vacuum", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			writeWebJSONRaw(w, nil, fmt.Errorf("POST required"))
+			return
+		}
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONRaw(w, nil, err); return }
+		if err := svc.Vacuum(); err != nil {
+			writeWebJSONRaw(w, nil, err)
+			return
+		}
+		writeWebJSONRaw(w, map[string]any{"status": "ok", "message": "database vacuumed successfully"}, nil)
+	})
 	http.HandleFunc("/api/count", func(w http.ResponseWriter, r *http.Request) {
 		svc, _, err := ws.Resolve("")
 		if err != nil { writeWebJSONRaw(w, nil, err); return }
@@ -488,6 +501,18 @@ func cmdServeWeb(args []string) int {
 		if err == nil { response["yaml"] = string(data) }
 		if mdErr == nil { response["markdown"] = string(mdData) }
 		json.NewEncoder(w).Encode(response)
+	})
+	http.HandleFunc("/api/workspace/refresh", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			writeWebJSONRaw(w, nil, fmt.Errorf("POST required"))
+			return
+		}
+		added := ws.RefreshWorkspace()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"added":          added,
+			"total_projects": len(ws.ProjectNames()),
+		})
 	})
 
 	fmt.Fprintf(os.Stderr, "Web UI server starting at http://127.0.0.1:8147\n")

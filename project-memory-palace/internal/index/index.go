@@ -146,6 +146,20 @@ func (idx *MemoryIndex) Initialize() error {
 	return nil
 }
 
+// Vacuum reclaims unused disk space from the SQLite database.
+// Call periodically to maintain database performance.
+func (idx *MemoryIndex) Vacuum() error {
+	if err := idx.Initialize(); err != nil {
+		return err
+	}
+	db, err := idx.connect()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec("VACUUM")
+	return err
+}
+
 func (idx *MemoryIndex) Clear() error {
 	db, err := idx.connect()
 	if err != nil { return err }

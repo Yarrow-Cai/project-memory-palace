@@ -542,4 +542,35 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 			"project":     svc.ProjectRoot(),
 		}, nil
 	}))
+
+	// 15. vacuum
+	reg.Register("vacuum", "压缩数据库，回收磁盘空间。建议定期调用以保持数据库性能。", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"project": projectProp,
+		},
+	}, wrap(func(params map[string]any) (any, error) {
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil {
+			return nil, err
+		}
+		if err := svc.Vacuum(); err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"status":  "ok",
+			"message": "database vacuumed successfully",
+		}, nil
+	}))
+
+	// 16. refresh_workspace
+	reg.Register("refresh_workspace", "刷新工作区，扫描新添加的工程。添加新工程后无需重启服务。", map[string]any{
+		"type": "object", "properties": map[string]any{},
+	}, wrap(func(params map[string]any) (any, error) {
+		added := ws.RefreshWorkspace()
+		return map[string]any{
+			"added":          added,
+			"total_projects": len(ws.ProjectNames()),
+		}, nil
+	}))
 }

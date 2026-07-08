@@ -49,6 +49,7 @@ func buildICO() []byte {
 var (
 	mu          sync.Mutex
 	svc         *service.MemoryService
+	ws          *service.WorkspaceService
 	projectRoot string
 	mcpCmd      *exec.Cmd
 	mcpRunning  bool
@@ -209,7 +210,8 @@ func toggleMCP(si, bi *systray.MenuItem) {
 
 func startAPI() {
 	reg := mcp.NewToolRegistry()
-	ws, wsErr := service.NewWorkspace(projectRoot)
+	var wsErr error
+	ws, wsErr = service.NewWorkspace(projectRoot)
 	if wsErr != nil || len(ws.ProjectNames()) == 0 {
 		ws, _ = service.NewSingleProject(projectRoot)
 	}
@@ -237,6 +239,7 @@ func startAPI() {
 	http.HandleFunc("/api/rules", handleRules)
 	http.HandleFunc("/api/count", handleCount)
 	http.HandleFunc("/api/disclosure", handleDisclosure)
+	http.HandleFunc("/api/workspace/refresh", handleWorkspaceRefresh)
 	fmt.Fprintln(os.Stderr, "API + SSE server started on 127.0.0.1:8147")
 	if err := http.ListenAndServe("127.0.0.1:8147", nil); err != nil {
 		log.Printf("HTTP server error: %v", err)
@@ -402,6 +405,33 @@ func handleDisclosure(w http.ResponseWriter, r *http.Request) {
 	since := r.URL.Query().Get("since")
 	results, err := svc.Disclosure(mode, since)
 	writeWebJSONList(w, results, err)
+}
+
+func handleWorkspaceRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeWebJSONRaw(w, nil, fmt.Errorf("POST required"))
+		return
+	}
+	mu.Lock(); defer mu.Unlock()
+	added := ws.RefreshWorkspace()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"added":          added,
+		"total_projects": len(ws.ProjectNames()),
+	})
+}
+
+func handleVacuum(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeWebJSONRaw(w, nil, fmt.Errorf("POST required"))
+		return
+	}
+	mu.Lock(); defer mu.Unlock()
+	if err := svc.Vacuum(); err != nil {
+		writeWebJSONRaw(w, nil, err)
+		return
+	}
+	writeWebJSONRaw(w, map[string]any{"status": "ok", "message": "database vacuumed successfully"}, nil)
 }
 
 func writeWebJSONList(w http.ResponseWriter, results []map[string]any, err error) {

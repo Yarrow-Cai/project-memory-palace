@@ -186,6 +186,39 @@ func (ws *WorkspaceService) Close() error {
 	return firstErr
 }
 
+// RefreshWorkspace re-scans workspaceDir for new subdirectories containing
+// .project-memory/. Creates and initializes a MemoryService for each NEW
+// project found. Does NOT remove existing projects. Returns the list of
+// newly added project names.
+func (ws *WorkspaceService) RefreshWorkspace() []string {
+	entries, err := os.ReadDir(ws.workspaceDir)
+	if err != nil {
+		log.Printf("pmem: refresh_workspace: %v", err)
+		return nil
+	}
+	var added []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dirName := entry.Name()
+		if _, exists := ws.projects[dirName]; exists {
+			continue
+		}
+		projDir := filepath.Join(ws.workspaceDir, dirName)
+		projMemoryDir := filepath.Join(projDir, ".project-memory")
+		if info, err := os.Stat(projMemoryDir); err == nil && info.IsDir() {
+			svc := New(projDir)
+			ws.projects[dirName] = svc
+			if ws.defaultProj == "" {
+				ws.defaultProj = dirName
+			}
+			added = append(added, dirName)
+		}
+	}
+	return added
+}
+
 // extractProject extracts "project" string from MCP params map.
 func extractProject(params map[string]any) string {
 	if params == nil {

@@ -30,6 +30,11 @@ func (s *MemoryService) ProjectRoot() string { return s.projectRoot }
 // After Close, the service must not be used without reinitialization.
 func (s *MemoryService) Close() error { return s.idx.Close() }
 
+// Vacuum reclaims unused disk space from the underlying SQLite database.
+func (s *MemoryService) Vacuum() error {
+	return s.idx.Vacuum()
+}
+
 func (s *MemoryService) InitProject() error {
 	if s.initDone.Load() { return nil }
 	if err := store.EnsureProjectMemory(s.projectRoot); err != nil { return fmt.Errorf("init project: %w", err) }
