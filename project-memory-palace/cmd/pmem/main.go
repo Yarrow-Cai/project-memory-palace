@@ -38,7 +38,7 @@ func run() int {
 	args := flag.Args()
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: pmem [--project-root <dir>] <command> [args...]")
-		fmt.Fprintln(os.Stderr, "commands: init, remember, search, open, recent, update, delete, purge, rebuild-index, audit, verify, serve-mcp, serve-web, synthesize-rules, disclose")
+		fmt.Fprintln(os.Stderr, "commands: init, remember, search, open, recent, update, delete, purge, rebuild-index, audit, verify, export, serve-mcp, serve-web, synthesize-rules, disclose")
 		return 1
 	}
 
@@ -76,6 +76,8 @@ func run() int {
 		return cmdDisclose(cmdArgs)
 	case "verify":
 		return cmdVerify(cmdArgs)
+	case "export":
+		return cmdExport(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown command %q\n", cmd)
 		return 1
@@ -299,6 +301,25 @@ func cmdVerify(args []string) int {
 	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
 	data, _ := yaml.Marshal(report)
 	fmt.Print(string(data))
+	return 0
+}
+
+
+func cmdExport(args []string) int {
+	fs := flag.NewFlagSet("export", flag.ContinueOnError)
+	format := fs.String("format", "yaml", "Output format: yaml or json")
+	if err := fs.Parse(args); err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+	svc, err := newService()
+	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+	cards, err := svc.ExportCards()
+	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+	var data []byte
+	if *format == "json" {
+		data, _ = json.MarshalIndent(map[string]any{"cards": cards, "count": len(cards)}, "", "  ")
+	} else {
+		data, _ = yaml.Marshal(map[string]any{"cards": cards, "count": len(cards)})
+	}
+	fmt.Println(string(data))
 	return 0
 }
 

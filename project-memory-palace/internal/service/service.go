@@ -306,6 +306,18 @@ func (s *MemoryService) DeleteMemory(id string) (map[string]any, error) {
 
 // PurgeExpired deletes all memories with status "expired".
 
+
+func (s *MemoryService) ExportCards() ([]map[string]any, error) {
+	if err := s.InitProject(); err != nil { return nil, err }
+	cards, err := store.DiscoverCards(s.projectRoot)
+	if err != nil { return nil, err }
+	var results []map[string]any
+	for _, c := range cards {
+		results = append(results, cardToMap(c))
+	}
+	return results, nil
+}
+
 func (s *MemoryService) VerifyIntegrity() (map[string]any, error) {
 	if err := s.InitProject(); err != nil { return nil, err }
 	cards, err := store.DiscoverCards(s.projectRoot)

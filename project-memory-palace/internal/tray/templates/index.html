@@ -253,7 +253,23 @@ body.light .badge-expired{background:#fee2e2;color:#991b1b}
 /* Priority stars */
 .prio-stars{display:inline-flex;gap:2px}
 .prio-stars .star{width:10px;height:10px;clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);background:var(--border2)}
-.prio-stars .star.on{background:var(--yellow)}'
+.prio-stars .star.on{background:var(--yellow)}
+
+/* ===== Relation Graph ===== */
+.graph-section{margin-top:8px}
+.graph-section .graph-header{cursor:pointer;display:flex;align-items:center;gap:6px;padding:8px 0;border-top:1px solid var(--border);user-select:none;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);transition:color .15s}
+.graph-section .graph-header:hover{color:var(--text)}
+.graph-section .graph-header .toggle-arrow{transition:transform .2s;font-size:10px;display:inline-block}
+.graph-section .graph-header.open .toggle-arrow{transform:rotate(90deg)}
+.graph-svg-wrap{overflow:hidden;position:relative;margin-top:8px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)}
+.graph-svg-wrap svg{display:block;width:100%}
+.graph-node{cursor:pointer;transition:opacity .15s}
+.graph-node:hover{opacity:.75}
+.graph-node-text{font-size:9px;font-family:var(--font);fill:var(--text2);pointer-events:none;text-anchor:middle}
+.graph-node-center .graph-node-text{font-size:11px;font-weight:700;fill:var(--text)}
+.graph-edge{stroke:var(--border2);stroke-width:1.2;fill:none}
+.graph-edge-label{font-size:8px;fill:var(--text3);font-family:var(--font);text-anchor:middle;pointer-events:none}
+.graph-empty{text-align:center;color:var(--text3);font-size:12px;padding:20px}
 
 </style>
 </head>
