@@ -305,6 +305,52 @@ func (s *MemoryService) DeleteMemory(id string) (map[string]any, error) {
 }
 
 // PurgeExpired deletes all memories with status "expired".
+
+func (s *MemoryService) VerifyIntegrity() (map[string]any, error) {
+	if err := s.InitProject(); err != nil { return nil, err }
+	cards, err := store.DiscoverCards(s.projectRoot)
+	if err != nil { return nil, err }
+
+	yamlIDs := map[string]bool{}
+	var orphansYAML []string
+	var mismatches []map[string]any
+
+	for _, c := range cards {
+		yamlIDs[c.ID] = true
+		meta, err := s.idx.GetMemory(c.ID)
+		if err != nil || meta == nil {
+			orphansYAML = append(orphansYAML, c.ID)
+			continue
+		}
+		// Check key fields match
+		if meta["title"] != c.Title {
+			mismatches = append(mismatches, map[string]any{"id": c.ID, "field": "title", "yaml": c.Title, "sqlite": meta["title"]})
+		}
+		if meta["type"] != c.Type {
+			mismatches = append(mismatches, map[string]any{"id": c.ID, "field": "type", "yaml": c.Type, "sqlite": meta["type"]})
+		}
+	}
+
+	// Find SQLite-only orphans
+	allRecent, _ := s.idx.Recent(10000, 0, nil)
+	var orphansSQLite []string
+	for _, r := range allRecent {
+		id, _ := r["id"].(string)
+		if !yamlIDs[id] {
+			orphansSQLite = append(orphansSQLite, id)
+		}
+	}
+
+	return map[string]any{
+		"total_yaml":      len(cards),
+		"total_sqlite":    len(allRecent),
+		"orphans_yaml":    orphansYAML,
+		"orphans_sqlite":  orphansSQLite,
+		"mismatches":      mismatches,
+		"healthy":         len(orphansYAML) == 0 && len(orphansSQLite) == 0 && len(mismatches) == 0,
+	}, nil
+}
+
 func (s *MemoryService) PurgeExpired() (map[string]any, error) {
 	if err := s.InitProject(); err != nil { return nil, err }
 	ids, err := s.idx.ListExpired()

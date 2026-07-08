@@ -38,7 +38,7 @@ func run() int {
 	args := flag.Args()
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: pmem [--project-root <dir>] <command> [args...]")
-		fmt.Fprintln(os.Stderr, "commands: init, remember, search, open, recent, update, delete, purge, rebuild-index, audit, serve-mcp, serve-web, synthesize-rules, disclose")
+		fmt.Fprintln(os.Stderr, "commands: init, remember, search, open, recent, update, delete, purge, rebuild-index, audit, verify, serve-mcp, serve-web, synthesize-rules, disclose")
 		return 1
 	}
 
@@ -74,6 +74,8 @@ func run() int {
 		return cmdAudit(cmdArgs)
 	case "disclose":
 		return cmdDisclose(cmdArgs)
+	case "verify":
+		return cmdVerify(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown command %q\n", cmd)
 		return 1
@@ -286,6 +288,17 @@ func cmdServeMCP(args []string) int {
 		fmt.Fprintf(os.Stderr, "mcp error: %v\n", err)
 		return 1
 	}
+	return 0
+}
+
+
+func cmdVerify(args []string) int {
+	svc, err := newService()
+	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+	report, err := svc.VerifyIntegrity()
+	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+	data, _ := yaml.Marshal(report)
+	fmt.Print(string(data))
 	return 0
 }
 
