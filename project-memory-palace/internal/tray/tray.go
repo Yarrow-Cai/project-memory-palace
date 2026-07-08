@@ -240,6 +240,7 @@ func startAPI() {
 	http.HandleFunc("/api/count", handleCount)
 	http.HandleFunc("/api/disclosure", handleDisclosure)
 	http.HandleFunc("/api/workspace/refresh", handleWorkspaceRefresh)
+	http.HandleFunc("/api/vacuum", handleVacuum)
 	fmt.Fprintln(os.Stderr, "API + SSE server started on 127.0.0.1:8147")
 	if err := http.ListenAndServe("127.0.0.1:8147", nil); err != nil {
 		log.Printf("HTTP server error: %v", err)
