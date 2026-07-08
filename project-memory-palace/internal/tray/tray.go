@@ -311,6 +311,9 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if s := r.URL.Query().Get("source_agent"); s != "" { updates["source_agent"] = s }
 	if s := r.URL.Query().Get("knowledge_kind"); s != "" { updates["knowledge_kind"] = s }
 	if s := r.URL.Query().Get("expires_at"); s != "" { updates["expires_at"] = s }
+	if s := r.URL.Query().Get("priority"); s != "" {
+		if p, err := strconv.Atoi(s); err == nil { updates["priority"] = p }
+	}
 	result, err := svc.UpdateMemory(id, updates)
 	writeWebJSONRaw(w, result, err)
 }
