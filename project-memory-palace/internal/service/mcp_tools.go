@@ -367,44 +367,11 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 	}, wrap(func(params map[string]any) (any, error) {
 	svc, _, err := ws.resolve(extractProject(params))
 	if err != nil { return nil, err }
-		mode, _ := params["mode"].(string)
-		since, _ := params["since"].(string)
-		var results []map[string]any
-		switch mode {
-		case "first":
-			r, err := svc.ListRecent(20, 0, map[string]any{"status": "active", "priority": 3})
-			if err != nil {
-				return nil, err
-			}
-			results = r
-		case "subsequent":
-			highPri, e1 := svc.ListRecent(15, 0, map[string]any{"status": "active", "priority": 5})
-			recent, e2 := svc.ListRecent(15, 0, map[string]any{"status": "active"})
-			if e1 != nil {
-				return nil, e1
-			}
-			if e2 != nil {
-				return nil, e2
-			}
-			seen := map[string]bool{}
-			for _, r := range highPri {
-				seen[r["id"].(string)] = true
-				results = append(results, r)
-			}
-			for _, r := range recent {
-				if !seen[r["id"].(string)] {
-					if since == "" || (r["updated_at"] != nil && IsAfterTime(fmt.Sprint(r["updated_at"]), since)) {
-						results = append(results, r)
-					}
-				}
-			}
-			if len(results) > 15 {
-				results = results[:15]
-			}
-		default:
-			return nil, fmt.Errorf("mode must be 'first' or 'subsequent'")
-		}
-		return map[string]any{"mode": mode, "results": results}, nil
+	mode, _ := params["mode"].(string)
+	since, _ := params["since"].(string)
+	results, err := svc.Disclosure(mode, since)
+	if err != nil { return nil, err }
+	return map[string]any{"mode": mode, "results": results}, nil
 	}))
 
 	// 10. check_rules_freshness

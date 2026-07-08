@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"log"
 	"sort"
 	"strings"
 )
@@ -83,6 +84,12 @@ func (ws *WorkspaceService) resolve(project string) (*MemoryService, string, err
 	return nil, "", fmt.Errorf("project %q not found (available: %s)", project, strings.Join(ws.ProjectNames(), ", "))
 }
 
+// Resolve returns the MemoryService for a project name (or default if empty).
+// Exported wrapper for callers outside the service package.
+func (ws *WorkspaceService) Resolve(project string) (*MemoryService, string, error) {
+	return ws.resolve(project)
+}
+
 // ProjectNames returns all project names.
 func (ws *WorkspaceService) ProjectNames() []string {
 	names := make([]string, 0, len(ws.projects))
@@ -118,7 +125,8 @@ func (ws *WorkspaceService) RecallAll(query string, filters map[string]any, limi
 	for name, svc := range ws.projects {
 		results, err := svc.Recall(query, filters, limit)
 		if err != nil {
-			continue // skip broken projects
+			log.Printf("pmem: recall_all skipping project %s: %v", name, err)
+			continue
 		}
 		for _, r := range results {
 			r["project"] = name

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -301,8 +302,16 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	mu.Lock(); defer mu.Unlock()
 	id := r.URL.Query().Get("id")
-	status := r.URL.Query().Get("status")
-	result, err := svc.UpdateMemory(id, map[string]any{"status": status})
+	updates := map[string]any{}
+	if s := r.URL.Query().Get("status"); s != "" { updates["status"] = s }
+	if s := r.URL.Query().Get("confidence"); s != "" {
+		if f, err := strconv.ParseFloat(s, 64); err == nil { updates["confidence"] = f }
+	}
+	if s := r.URL.Query().Get("tags"); s != "" { updates["tags"] = strings.Split(s, ",") }
+	if s := r.URL.Query().Get("source_agent"); s != "" { updates["source_agent"] = s }
+	if s := r.URL.Query().Get("knowledge_kind"); s != "" { updates["knowledge_kind"] = s }
+	if s := r.URL.Query().Get("expires_at"); s != "" { updates["expires_at"] = s }
+	result, err := svc.UpdateMemory(id, updates)
 	writeWebJSONRaw(w, result, err)
 }
 
@@ -337,9 +346,11 @@ func handleProjectRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	RemoveRecent(root)
-	// 閻喐顒滈崚鐘绘珟妞ゅ湱娲伴惃?.project-memory/ 閺佺増宓侀惄顔肩秿
 	memDir := store.MemoryDir(root)
-	os.RemoveAll(memDir)
+	if err := os.RemoveAll(memDir); err != nil {
+		writeWebJSONRaw(w, nil, fmt.Errorf("failed to remove project data: %w", err))
+		return
+	}
 	writeWebJSONRaw(w, map[string]any{"removed": root, "recents": recents}, nil)
 }
 
@@ -384,33 +395,7 @@ func handleDisclosure(w http.ResponseWriter, r *http.Request) {
 	mu.Lock(); defer mu.Unlock()
 	mode := r.URL.Query().Get("mode")
 	since := r.URL.Query().Get("since")
-	var results []map[string]any
-	var err error
-	switch mode {
-	case "first":
-		results, err = svc.ListRecent(20, 0, map[string]any{"status": "active", "priority": 3})
-	case "subsequent":
-		highPri, e1 := svc.ListRecent(15, 0, map[string]any{"status": "active", "priority": 5})
-		recent, e2 := svc.ListRecent(15, 0, map[string]any{"status": "active"})
-		if e1 != nil { err = e1 }
-		if e2 != nil { err = e2 }
-		seen := map[string]bool{}
-		for _, r := range highPri {
-			seen[r["id"].(string)] = true
-			results = append(results, r)
-		}
-		for _, r := range recent {
-			if !seen[r["id"].(string)] {
-				if since == "" || (r["updated_at"] != nil && service.IsAfterTime(fmt.Sprint(r["updated_at"]), since)) {
-					results = append(results, r)
-				}
-			}
-		}
-		if len(results) > 15 { results = results[:15] }
-	default:
-		writeWebJSONRaw(w, nil, fmt.Errorf("mode must be 'first' or 'subsequent'"))
-		return
-	}
+	results, err := svc.Disclosure(mode, since)
 	writeWebJSONList(w, results, err)
 }
 

@@ -118,7 +118,7 @@ func Synthesize(projectRoot string) (*RulesDocument, error) {
 	md.WriteString("### Integration tips:\n\n")
 	md.WriteString("- Load this file via `CLAUDE.md` or project configuration on session start.\n")
 	md.WriteString("- Call the `synthesize_rules` MCP tool to get the latest rules programmatically.\n")
-	md.WriteString("- Rules are regenerated automatically every time you `remember` a new card.\n\n")
+	md.WriteString("- Rules are NOT auto-regenerated. Call the `synthesize_rules` MCP tool to refresh them manually.\n\n")
 
 	md.WriteString("---\n\n")
 
@@ -144,7 +144,7 @@ func Synthesize(projectRoot string) (*RulesDocument, error) {
 	md.WriteString("## 📋 Rule Generation Info\n\n")
 	md.WriteString(fmt.Sprintf("- **Source**: `.project-memory/cards/` → filtered by `status=active` + `type∈{convention,decision}`\n"))
 	md.WriteString(fmt.Sprintf("- **Generated**: %s\n", now))
-	md.WriteString("- **Next update**: automatically on next `remember` call, or manually via `pmem synthesize-rules`\n")
+	md.WriteString("- **Next update**: manually via `pmem synthesize-rules` or the `synthesize_rules` MCP tool\n")
 
 	tmp2, err := os.CreateTemp(store.RulesDir(projectRoot), ".tmp-rules-md-*")
 	if err == nil {

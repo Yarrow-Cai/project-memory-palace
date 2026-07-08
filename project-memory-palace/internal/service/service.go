@@ -129,11 +129,30 @@ func (s *MemoryService) UpdateMemory(memoryID string, updates map[string]any) (m
 		f, ok := toFloat64(conf)
 		if !ok || f < 0 || f > 1 { return nil, fmt.Errorf("confidence must be 0.0-1.0") }
 		if f != existing["confidence"] { changed = true; existing["confidence"] = f }
+		// Re-check confidence cap: if source was not explicitly provided, cap at 0.5.
+		// A card created without source gets default kind="analysis" and a fixed description.
+		// We detect this by checking for the default description string.
+		if srcMap, ok := existing["source"].(map[string]any); ok && srcMap != nil {
+			desc, _ := srcMap["description"].(string)
+			kind, _ := srcMap["kind"].(string)
+			files, _ := srcMap["files"].([]string)
+			commits, _ := srcMap["commits"].([]string)
+			hasFiles := len(files) > 0
+			hasCommits := len(commits) > 0
+			// Default source from NewCard: kind="analysis", description="Source was not supplied by caller."
+			// If source matches this default, cap confidence.
+			if kind == "analysis" && desc == "Source was not supplied by caller." && !hasFiles && !hasCommits {
+				maxConf := 0.5
+				if c, ok := existing["confidence"].(float64); ok && c > maxConf {
+					existing["confidence"] = maxConf
+				}
+			}
+		}
 	}
 	if tags, ok := updates["tags"]; ok {
 		l, err := toStringList(tags)
 		if err != nil { return nil, fmt.Errorf("tags: %w", err) }
-		changed = true; existing["tags"] = l
+		if !stringSlicesEqual(existing["tags"], l) { changed = true; existing["tags"] = l }
 	}
 	if rels, ok := updates["relations"].(map[string]any); ok {
 		cur, _ := existing["relations"].(map[string][]string)
@@ -148,6 +167,12 @@ func (s *MemoryService) UpdateMemory(memoryID string, updates map[string]any) (m
 	}
 	if exp, ok := updates["expires_at"].(string); ok {
 		if exp != existing["expires_at"] { changed = true; existing["expires_at"] = exp }
+	}
+	if sa, ok := updates["source_agent"].(string); ok {
+		if sa != existing["source_agent"] { changed = true; existing["source_agent"] = sa }
+	}
+	if kk, ok := updates["knowledge_kind"].(string); ok {
+		if kk != existing["knowledge_kind"] { changed = true; existing["knowledge_kind"] = kk }
 	}
 	if !changed { return existing, nil }
 	existing["updated_at"] = now()
@@ -216,6 +241,50 @@ func (s *MemoryService) HotMemories(limit int) ([]map[string]any, error) {
 	return s.idx.HotMemories(limit)
 }
 
+// Disclosure returns memories using progressive disclosure strategy.
+// mode="first": priority>=3 active, limit 20.
+// mode="subsequent": priority>=5 + recently changed, deduped, limit 15.
+// When since is non-empty in subsequent mode, all cards are filtered to those updated after since.
+func (s *MemoryService) Disclosure(mode, since string) ([]map[string]any, error) {
+	if err := s.InitProject(); err != nil {
+		return nil, err
+	}
+	switch mode {
+	case "first":
+		return s.ListRecent(20, 0, map[string]any{"status": "active", "priority": 3})
+	case "subsequent":
+		highPri, err := s.ListRecent(15, 0, map[string]any{"status": "active", "priority": 5})
+		if err != nil {
+			return nil, err
+		}
+		recent, err := s.ListRecent(15, 0, map[string]any{"status": "active"})
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		var results []map[string]any
+		for _, r := range highPri {
+			if since == "" || (r["updated_at"] != nil && IsAfterTime(fmt.Sprint(r["updated_at"]), since)) {
+				seen[r["id"].(string)] = true
+				results = append(results, r)
+			}
+		}
+		for _, r := range recent {
+			if !seen[r["id"].(string)] {
+				if since == "" || (r["updated_at"] != nil && IsAfterTime(fmt.Sprint(r["updated_at"]), since)) {
+					results = append(results, r)
+				}
+			}
+		}
+		if len(results) > 15 {
+			results = results[:15]
+		}
+		return results, nil
+	default:
+		return nil, fmt.Errorf("mode must be 'first' or 'subsequent'")
+	}
+}
+
 func extractIDs(results []map[string]any) []string {
 	ids := make([]string, 0, len(results))
 	for _, r := range results {
@@ -230,4 +299,12 @@ func has(slice []string, item string) bool {
 	for _, s := range slice { if s == item { return true } }
 	return false
 }
-
+func stringSlicesEqual(a any, b []string) bool {
+	existing, ok := a.([]string)
+	if !ok { return true }
+	if len(existing) != len(b) { return false }
+	for i := range existing {
+		if existing[i] != b[i] { return false }
+	}
+	return true
+}

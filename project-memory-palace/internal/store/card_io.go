@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/atop/project-memory-palace/internal/memory"
 	"gopkg.in/yaml.v3"
@@ -108,12 +109,18 @@ func DiscoverCards(projectRoot string) ([]*memory.MemoryCard, error) {
 	}
 
 	cards := make([]*memory.MemoryCard, 0, len(matches))
+	var skipped []string
 	for _, p := range matches {
 		card, err := ReadCard(p)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", filepath.Base(p), err)
+			skipped = append(skipped, filepath.Base(p))
+			continue
 		}
 		cards = append(cards, card)
+	}
+
+	if len(skipped) > 0 {
+		fmt.Fprintf(os.Stderr, "pmem: WARNING — skipped %d unreadable card(s): %s\n", len(skipped), strings.Join(skipped, ", "))
 	}
 
 	sort.Slice(cards, func(i, j int) bool {

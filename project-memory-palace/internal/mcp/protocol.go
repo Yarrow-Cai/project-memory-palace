@@ -1,4 +1,4 @@
-﻿package mcp
+package mcp
 
 import (
 	"bufio"
@@ -106,7 +106,7 @@ func (s *StdioServer) Serve() error {
 			resp = NewResponse(req.ID, map[string]any{
 				"protocolVersion": "2024-11-05",
 				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": "project-memory-palace", "version": "0.4.0"},
+				"serverInfo":      map[string]any{"name": "project-memory-palace", "version": "0.6.0"},
 			})
 		case "tools/list":
 			resp = NewResponse(req.ID, map[string]any{"tools": s.Registry.List()})

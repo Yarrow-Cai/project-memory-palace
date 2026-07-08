@@ -1,4 +1,4 @@
-package index
+﻿package index
 
 import (
 	"database/sql"
@@ -89,6 +89,8 @@ type MemoryIndex struct {
 	dbOnce      sync.Once
 	db          *sql.DB
 	dbErr       error
+	expireOnce  sync.Once
+	stopExpire  chan struct{}
 }
 
 func NewMemoryIndex(projectRoot string) *MemoryIndex {
@@ -107,9 +109,13 @@ func (idx *MemoryIndex) connect() (*sql.DB, error) {
 // connect() was never invoked.
 func (idx *MemoryIndex) Close() error {
 	if idx.db != nil {
+		if idx.stopExpire != nil {
+			close(idx.stopExpire)
+		}
 		err := idx.db.Close()
 		idx.db = nil
 		idx.dbOnce = sync.Once{}
+		idx.expireOnce = sync.Once{}
 		return err
 	}
 	return nil
@@ -129,10 +135,14 @@ func (idx *MemoryIndex) Initialize() error {
 	db.Exec("ALTER TABLE memories ADD COLUMN last_accessed_at TEXT NOT NULL DEFAULT ''")
 	// Auto-expire cards with past expires_at
 	db.Exec("UPDATE memories SET status='expired' WHERE status='active' AND expires_at != '' AND expires_at <= datetime('now')")
+		// Start background auto-expire goroutine
+		idx.startAutoExpire()
 	// Migration: add source_agent column (added in schema v5)
 	db.Exec("ALTER TABLE memories ADD COLUMN source_agent TEXT NOT NULL DEFAULT ''")
 	// Migration: add knowledge_kind column (added in schema v5)
 	db.Exec("ALTER TABLE memories ADD COLUMN knowledge_kind TEXT NOT NULL DEFAULT ''")
+		// Migration: add index on memory_paths for faster context_for_files lookups (schema v6)
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_memory_paths_mid ON memory_paths(memory_id)")
 	return nil
 }
 
@@ -218,6 +228,32 @@ func (idx *MemoryIndex) ListExpired() ([]string, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+func (idx *MemoryIndex) startAutoExpire() {
+	idx.expireOnce.Do(func() {
+		idx.stopExpire = make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					idx.runAutoExpire()
+				case <-idx.stopExpire:
+					return
+				}
+			}
+		}()
+	})
+}
+
+func (idx *MemoryIndex) runAutoExpire() {
+	db, err := idx.connect()
+	if err != nil {
+		return
+	}
+	db.Exec("UPDATE memories SET status='expired' WHERE status='active' AND expires_at != '' AND expires_at <= datetime('now')")
 }
 
 func (idx *MemoryIndex) Search(query string, filters map[string]any, limit int) ([]map[string]any, error) {

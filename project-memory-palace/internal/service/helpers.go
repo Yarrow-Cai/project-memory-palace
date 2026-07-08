@@ -65,6 +65,9 @@ func buildCard(cardID string, payload map[string]any) memory.MemoryCard {
 		card.SourceAgent = sa
 	}
 	if kk, ok := payload["knowledge_kind"].(string); ok {
+		if !memory.KnowledgeKinds[kk] {
+			kk = ""
+		}
 		card.KnowledgeKind = kk
 	}
 	return card

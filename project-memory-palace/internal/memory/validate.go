@@ -54,6 +54,9 @@ func ValidateCard(card *MemoryCard) error {
 	if strings.TrimSpace(card.Source.Description) == "" {
 		return &ValidationError{"source.description", "must be non-empty"}
 	}
+	if card.KnowledgeKind != "" && !KnowledgeKinds[card.KnowledgeKind] {
+		return &ValidationError{"knowledge_kind", "must be one of: fact, interpretation, rule"}
+	}
 	for rel, targets := range card.Relations {
 		found := false
 		for _, r := range RelationKinds {

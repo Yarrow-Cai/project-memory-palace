@@ -1,4 +1,4 @@
-﻿package mcp
+package mcp
 
 import (
 	"crypto/rand"
@@ -18,19 +18,24 @@ type SSESession struct {
 	events chan string
 	done   chan struct{}
 	closed bool
+	lastActive time.Time
 }
 
 type SSEServer struct {
 	Registry *ToolRegistry
 	mu       sync.Mutex
 	sessions map[string]*SSESession
+	cleanupOnce sync.Once
+	stopCleanup chan struct{}
 }
 
 func NewSSEServer(registry *ToolRegistry) *SSEServer {
-	return &SSEServer{
+	s := &SSEServer{
 		Registry: registry,
 		sessions: make(map[string]*SSESession),
 	}
+	s.startCleanup()
+	return s
 }
 
 func newSessionID() string {
@@ -43,9 +48,10 @@ func (s *SSEServer) addSession() *SSESession {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ses := &SSESession{
-		id:     newSessionID(),
-		events: make(chan string, 64),
-		done:   make(chan struct{}),
+		id:         newSessionID(),
+		events:     make(chan string, 64),
+		done:       make(chan struct{}),
+		lastActive: time.Now(),
 	}
 	s.sessions[ses.id] = ses
 	return ses
@@ -66,7 +72,11 @@ func (s *SSEServer) removeSession(id string) {
 func (s *SSEServer) getSession(id string) *SSESession {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.sessions[id]
+	ses := s.sessions[id]
+	if ses != nil {
+		ses.lastActive = time.Now()
+	}
+	return ses
 }
 
 func (s *SSEServer) HandleSSE(w http.ResponseWriter, r *http.Request) {
@@ -100,8 +110,17 @@ func (s *SSEServer) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 	log.Printf("mcp: session %s started", session.id)
 
+	heartbeat := time.NewTicker(30 * time.Second)
+	defer heartbeat.Stop()
+
 	for {
 		select {
+		case <-heartbeat.C:
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				log.Printf("mcp: session %s heartbeat write error: %v", session.id, err)
+				return
+			}
+			flusher.Flush()
 		case evt := <-session.events:
 			if _, err := fmt.Fprint(w, evt); err != nil {
 				log.Printf("mcp: session %s write event: %v", session.id, err)
@@ -151,10 +170,14 @@ func (s *SSEServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1*1024*1024))
 	if err != nil {
 		log.Printf("mcp: session %s read body: %v", session.id, err)
 		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+	if len(body) >= 1*1024*1024 {
+		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	defer r.Body.Close()
@@ -174,7 +197,7 @@ func (s *SSEServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 		resp = NewResponse(req.ID, map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "project-memory-palace", "version": "0.3.0"},
+			"serverInfo":      map[string]any{"name": "project-memory-palace", "version": "0.6.0"},
 		})
 	case "tools/call":
 		name, _ := req.Params["name"].(string)
@@ -220,6 +243,44 @@ func (s *SSEServer) sendEvent(session *SSESession, resp Response) {
 	}
 }
 
+
+func (s *SSEServer) startCleanup() {
+	s.cleanupOnce.Do(func() {
+		s.stopCleanup = make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(2 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					s.cleanupStaleSessions()
+				case <-s.stopCleanup:
+					return
+				}
+			}
+		}()
+	})
+}
+
+func (s *SSEServer) cleanupStaleSessions() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for id, ses := range s.sessions {
+		if !ses.closed && now.Sub(ses.lastActive) > 10*time.Minute {
+			ses.closed = true
+			close(ses.done)
+			delete(s.sessions, id)
+			log.Printf("mcp: cleaned up stale session %s (inactive for %v)", id, now.Sub(ses.lastActive))
+		}
+	}
+}
+
+func (s *SSEServer) Stop() {
+	if s.stopCleanup != nil {
+		close(s.stopCleanup)
+	}
+}
 
 func BuildMCPConfig(exePath string, projectRoot string) string {
 	cfg := map[string]any{

@@ -1,4 +1,4 @@
-﻿// pmem - Project Memory Palace: unified CLI, tray, and MCP server.
+// pmem - Project Memory Palace: unified CLI, tray, and MCP server.
 package main
 
 import (
@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/atop/project-memory-palace/internal/audit"
@@ -230,50 +231,19 @@ func cmdAudit(args []string) int {
 }
 
 func cmdDisclose(args []string) int {
+	mode := flag.String("mode", "first", "Disclosure mode: first or subsequent")
+	since := flag.String("since", "", "ISO timestamp for subsequent mode")
 	fs := flag.NewFlagSet("disclose", flag.ContinueOnError)
-	mode := fs.String("mode", "first", "Disclosure mode: first or subsequent")
-	since := fs.String("since", "", "ISO timestamp (required for subsequent mode)")
 	if err := fs.Parse(args); err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
-	// Also support positional args: pmem disclose first / pmem disclose subsequent <since>
-	if *mode == "first" && fs.NArg() > 0 {
-		*mode = fs.Arg(0)
-		if *mode == "subsequent" && fs.NArg() > 1 {
-			*since = fs.Arg(1)
-		}
-	}
+	if fs.NArg() > 0 { *mode = fs.Arg(0) }
+	if *mode == "subsequent" && fs.NArg() > 1 { *since = fs.Arg(1) }
+	if *mode == "subsequent" && *since == "" { fmt.Fprintln(os.Stderr, "error: --since is required for subsequent mode"); return 1 }
+
 	svc, err := newService()
 	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
-	var results []map[string]any
-	switch *mode {
-	case "first":
-		results, err = svc.ListRecent(20, 0, map[string]any{"status": "active", "priority": 3})
-	case "subsequent":
-		if *since == "" { fmt.Fprintln(os.Stderr, "error: --since is required for subsequent mode"); return 1 }
-		// Two queries: priority>=5 active + updated after since
-		highPri, e1 := svc.ListRecent(15, 0, map[string]any{"status": "active", "priority": 5})
-		sinceFilt := map[string]any{"status": "active"}
-		recent, e2 := svc.ListRecent(15, 0, sinceFilt)
-		if e1 != nil { err = e1 }
-		if e2 != nil { err = e2 }
-		// Merge and dedupe, filter by since
-		seen := map[string]bool{}
-		for _, r := range highPri {
-			seen[r["id"].(string)] = true
-			results = append(results, r)
-		}
-		for _, r := range recent {
-			if !seen[r["id"].(string)] {
-				if updated, ok := r["updated_at"].(string); ok && service.IsAfterTime(updated, *since) {
-					results = append(results, r)
-				}
-			}
-		}
-		if len(results) > 15 { results = results[:15] }
-	default:
-		fmt.Fprintf(os.Stderr, "error: unknown mode %q (use first or subsequent)\n", *mode)
-		return 1
-	}
+	results, err := svc.Disclosure(*mode, *since)
 	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+
 	out := map[string]any{"mode": *mode, "count": len(results), "results": results}
 	data, _ := yaml.Marshal(out)
 	fmt.Print(string(data))
@@ -321,9 +291,17 @@ func cmdServeMCP(args []string) int {
 
 func cmdServeWeb(args []string) int {
 	if len(args) > 0 { projectRoot = args[0] }
-	svc, err := newService()
-	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
-	svc.InitProject()
+
+	var ws *service.WorkspaceService
+	var wsErr error
+	ws, wsErr = service.NewWorkspace(projectRoot)
+	if wsErr != nil || len(ws.ProjectNames()) == 0 {
+		ws, wsErr = service.NewSingleProject(projectRoot)
+		if wsErr != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", wsErr)
+			return 1
+		}
+	}
 	tray.AddRecent(projectRoot)
 
 	// REST API routes
@@ -336,6 +314,8 @@ func cmdServeWeb(args []string) int {
 		json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
 	})
 	http.HandleFunc("/api/recent", func(w http.ResponseWriter, r *http.Request) {
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONList(w, nil, err); return }
 		limit := service.ParseIntParam(r.URL.Query().Get("limit"), 20)
 		offset := service.ParseIntParam(r.URL.Query().Get("offset"), 0)
 		filters := map[string]any{}
@@ -346,12 +326,16 @@ func cmdServeWeb(args []string) int {
 		writeWebJSONList(w, results, err)
 	})
 	http.HandleFunc("/api/search", func(w http.ResponseWriter, r *http.Request) {
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONList(w, nil, err); return }
 		q := r.URL.Query().Get("q")
 		if q == "" { writeWebJSONList(w, nil, nil); return }
 		results, err := svc.Recall(q, nil, 30)
 		writeWebJSONList(w, results, err)
 	})
 	http.HandleFunc("/api/context", func(w http.ResponseWriter, r *http.Request) {
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONList(w, nil, err); return }
 		pathStr := r.URL.Query().Get("paths")
 		if pathStr == "" { writeWebJSONList(w, nil, nil); return }
 		paths := strings.Split(pathStr, ",")
@@ -360,15 +344,21 @@ func cmdServeWeb(args []string) int {
 		writeWebJSONList(w, results, err)
 	})
 	http.HandleFunc("/api/hot", func(w http.ResponseWriter, r *http.Request) {
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONList(w, nil, err); return }
 		limit := service.ParseIntParam(r.URL.Query().Get("limit"), 20)
 		results, err := svc.HotMemories(limit)
 		writeWebJSONList(w, results, err)
 	})
 	http.HandleFunc("/api/decay", func(w http.ResponseWriter, r *http.Request) {
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONList(w, nil, err); return }
 		results, err := svc.ListRecent(1000, 0, map[string]any{"status": "active"})
 		writeWebJSONList(w, results, err)
 	})
 	http.HandleFunc("/api/open", func(w http.ResponseWriter, r *http.Request) {
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONRaw(w, nil, err); return }
 		id := r.URL.Query().Get("id")
 		result, err := svc.OpenMemory(id)
 		writeWebJSONRaw(w, result, err)
@@ -378,9 +368,19 @@ func cmdServeWeb(args []string) int {
 			writeWebJSONRaw(w, nil, fmt.Errorf("POST required"))
 			return
 		}
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONRaw(w, nil, err); return }
 		id := r.URL.Query().Get("id")
-		status := r.URL.Query().Get("status")
-		result, err := svc.UpdateMemory(id, map[string]any{"status": status})
+		updates := map[string]any{}
+		if s := r.URL.Query().Get("status"); s != "" { updates["status"] = s }
+		if s := r.URL.Query().Get("confidence"); s != "" {
+			if f, err := strconv.ParseFloat(s, 64); err == nil { updates["confidence"] = f }
+		}
+		if s := r.URL.Query().Get("tags"); s != "" { updates["tags"] = strings.Split(s, ",") }
+		if s := r.URL.Query().Get("source_agent"); s != "" { updates["source_agent"] = s }
+		if s := r.URL.Query().Get("knowledge_kind"); s != "" { updates["knowledge_kind"] = s }
+		if s := r.URL.Query().Get("expires_at"); s != "" { updates["expires_at"] = s }
+		result, err := svc.UpdateMemory(id, updates)
 		writeWebJSONRaw(w, result, err)
 	})
 	http.HandleFunc("/api/delete", func(w http.ResponseWriter, r *http.Request) {
@@ -388,6 +388,8 @@ func cmdServeWeb(args []string) int {
 			writeWebJSONRaw(w, nil, fmt.Errorf("POST required"))
 			return
 		}
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONRaw(w, nil, err); return }
 		id := r.URL.Query().Get("id")
 		if id == "" { writeWebJSONRaw(w, nil, fmt.Errorf("id parameter required")); return }
 		result, err := svc.DeleteMemory(id)
@@ -398,10 +400,14 @@ func cmdServeWeb(args []string) int {
 			writeWebJSONRaw(w, nil, fmt.Errorf("POST required"))
 			return
 		}
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONRaw(w, nil, err); return }
 		result, err := svc.PurgeExpired()
 		writeWebJSONRaw(w, result, err)
 	})
 	http.HandleFunc("/api/count", func(w http.ResponseWriter, r *http.Request) {
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONRaw(w, nil, err); return }
 		filters := map[string]any{}
 		if t := r.URL.Query().Get("type"); t != "" { filters["type"] = t }
 		if s := r.URL.Query().Get("status"); s != "" { filters["status"] = s }
@@ -414,35 +420,11 @@ func cmdServeWeb(args []string) int {
 		writeWebJSONRaw(w, map[string]any{"count": count}, nil)
 	})
 	http.HandleFunc("/api/disclosure", func(w http.ResponseWriter, r *http.Request) {
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONList(w, nil, err); return }
 		mode := r.URL.Query().Get("mode")
 		since := r.URL.Query().Get("since")
-		var results []map[string]any
-		var err error
-		switch mode {
-		case "first":
-			results, err = svc.ListRecent(20, 0, map[string]any{"status": "active", "priority": 3})
-		case "subsequent":
-			highPri, e1 := svc.ListRecent(15, 0, map[string]any{"status": "active", "priority": 5})
-			recent, e2 := svc.ListRecent(15, 0, map[string]any{"status": "active"})
-			if e1 != nil { err = e1 }
-			if e2 != nil { err = e2 }
-			seen := map[string]bool{}
-			for _, r := range highPri {
-				seen[r["id"].(string)] = true
-				results = append(results, r)
-			}
-			for _, r := range recent {
-				if !seen[r["id"].(string)] {
-					if since == "" || (r["updated_at"] != nil && service.IsAfterTime(fmt.Sprint(r["updated_at"]), since)) {
-						results = append(results, r)
-					}
-				}
-			}
-			if len(results) > 15 { results = results[:15] }
-		default:
-			writeWebJSONRaw(w, nil, fmt.Errorf("mode must be 'first' or 'subsequent'"))
-			return
-		}
+		results, err := svc.Disclosure(mode, since)
 		writeWebJSONList(w, results, err)
 	})
 	http.HandleFunc("/api/project/remove", func(w http.ResponseWriter, r *http.Request) {
@@ -456,9 +438,11 @@ func cmdServeWeb(args []string) int {
 			return
 		}
 		tray.RemoveRecent(root)
-		// 真正删除项目的 .project-memory/ 数据目录
 		memDir := store.MemoryDir(root)
-		os.RemoveAll(memDir)
+		if err := os.RemoveAll(memDir); err != nil {
+			writeWebJSONRaw(w, nil, fmt.Errorf("failed to remove project data: %w", err))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"removed": root, "recents": tray.RecentList()})
 	})
@@ -473,8 +457,10 @@ func cmdServeWeb(args []string) int {
 			return
 		}
 		projectRoot = newRoot
-		svc = service.New(projectRoot)
-		svc.InitProject()
+		ws, _ = service.NewWorkspace(newRoot)
+		if ws == nil || len(ws.ProjectNames()) == 0 {
+			ws, _ = service.NewSingleProject(newRoot)
+		}
 		tray.AddRecent(newRoot)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"root": projectRoot, "recents": tray.RecentList()})
@@ -484,6 +470,8 @@ func cmdServeWeb(args []string) int {
 		json.NewEncoder(w).Encode(map[string]any{"recents": tray.RecentList()})
 	})
 	http.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONRaw(w, nil, err); return }
 		data, err := os.ReadFile(store.RulesPath(svc.ProjectRoot()))
 		if err != nil {
 			writeWebJSONRaw(w, nil, fmt.Errorf("rules not found"))
@@ -501,7 +489,7 @@ func cmdServeWeb(args []string) int {
 
 	fmt.Fprintf(os.Stderr, "Web UI server starting at http://127.0.0.1:8147\n")
 	fmt.Fprintf(os.Stderr, "Project root: %s\n", projectRoot)
-	defer svc.Close()
+	defer ws.Close()
 	if err := http.ListenAndServe("127.0.0.1:8147", nil); err != nil {
 		log.Printf("HTTP server error: %v", err)
 		return 1
