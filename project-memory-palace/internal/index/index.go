@@ -446,6 +446,9 @@ func (idx *MemoryIndex) Rebuild() error {
 	cards, err := store.DiscoverCards(idx.projectRoot)
 	if err != nil { return fmt.Errorf("rebuild: %w", err) }
 	idx.Initialize()
+	// Save access tracking before wiping
+	accessCounts, lastAccess, _ := idx.saveAccessData()
+
 	idx.Clear()
 	db, err := idx.connect()
 	if err != nil { return err }
@@ -455,7 +458,12 @@ func (idx *MemoryIndex) Rebuild() error {
 	for _, c := range cards {
 		if err := doUpsert(tx, c); err != nil { return fmt.Errorf("rebuild %s: %w", c.ID, err) }
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil { return err }
+
+	// Restore access tracking
+	idx.restoreAccessData(accessCounts, lastAccess)
+
+	return nil
 }
 
 func (idx *MemoryIndex) SearchByPaths(paths []string, limit int) ([]map[string]any, error) {
@@ -512,6 +520,36 @@ func (idx *MemoryIndex) RecordAccess(ids []string) error {
 	args := append([]any{now}, toAnySlice(ids)...)
 	_, err = db.Exec(q, args...)
 	return err
+}
+
+// saveAccessData reads access_count and last_accessed_at from the current index
+// and returns them as maps keyed by memory ID.
+func (idx *MemoryIndex) saveAccessData() (map[string]int, map[string]string, error) {
+	db, err := idx.connect()
+	if err != nil { return nil, nil, err }
+	rows, err := db.Query("SELECT id, access_count, last_accessed_at FROM memories")
+	if err != nil { return nil, nil, err }
+	defer rows.Close()
+	counts := make(map[string]int)
+	lastAccess := make(map[string]string)
+	for rows.Next() {
+		var id, lastAt string
+		var count int
+		if err := rows.Scan(&id, &count, &lastAt); err != nil { continue }
+		counts[id] = count
+		lastAccess[id] = lastAt
+	}
+	return counts, lastAccess, nil
+}
+
+func (idx *MemoryIndex) restoreAccessData(counts map[string]int, lastAccess map[string]string) error {
+	db, err := idx.connect()
+	if err != nil { return err }
+	for id, count := range counts {
+		lastAt := lastAccess[id]
+		db.Exec("UPDATE memories SET access_count=?, last_accessed_at=? WHERE id=?", count, lastAt, id)
+	}
+	return nil
 }
 
 func toAnySlice(ss []string) []any {
