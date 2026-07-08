@@ -49,7 +49,7 @@ func (s *SSEServer) addSession() *SSESession {
 	defer s.mu.Unlock()
 	ses := &SSESession{
 		id:         newSessionID(),
-		events:     make(chan string, 64),
+		events:     make(chan string, 256),
 		done:       make(chan struct{}),
 		lastActive: time.Now(),
 	}
@@ -184,7 +184,7 @@ func (s *SSEServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 
 	req, err := ParseRequest(body)
 	if err != nil {
-		s.sendEvent(session, NewErrorResponse("0", -32700, "Parse error"))
+		s.sendEvent(w, session, NewErrorResponse("0", -32700, "Parse error"))
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
@@ -207,7 +207,11 @@ func (s *SSEServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err := s.Registry.Dispatch(name, args)
 		if err != nil {
-			resp = NewErrorResponse(req.ID, -32603, err.Error())
+		code := -32603
+		if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be") {
+			code = -32602
+		}
+		resp = NewErrorResponse(req.ID, code, err.Error())
 		} else {
 			resultJSON, _ := json.Marshal(result)
 			resp = NewResponse(req.ID, map[string]any{
@@ -223,23 +227,25 @@ func (s *SSEServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 		resp = NewErrorResponse(req.ID, -32601, fmt.Sprintf("unknown method: %s", req.Method))
 	}
 
-	s.sendEvent(session, resp)
+	s.sendEvent(w, session, resp)
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (s *SSEServer) sendEvent(session *SSESession, resp Response) {
+func (s *SSEServer) sendEvent(w http.ResponseWriter, session *SSESession, resp Response) {
 	data, err := json.Marshal(resp)
 	if err != nil {
 		log.Printf("mcp: marshal response: %v", err)
 		return
 	}
 	msg := fmt.Sprintf("event: message\ndata: %s\n\n", string(data))
-	timer := time.NewTimer(5 * time.Second)
+	timer := time.NewTimer(3 * time.Second)
 	select {
 	case session.events <- msg:
 		timer.Stop()
 	case <-timer.C:
-		log.Printf("mcp: session %s event channel full, dropping response", session.id)
+		log.Printf("mcp: WARNING session %s event channel full (depth=%d), sending overload error to client", session.id, len(session.events))
+		errPayload := `{"jsonrpc":"2.0","error":{"code":-32000,"message":"server overloaded, try again"}}`
+		fmt.Fprintf(w, "event: message\ndata: %s\n\n", errPayload)
 	}
 }
 

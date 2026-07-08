@@ -43,7 +43,8 @@ func AuditProject(projectRoot string) ([]map[string]any, error) {
 		if len(card.Scope.Modules) == 0 && len(card.Scope.Paths) == 0 {
 			issues = append(issues, "missing_scope")
 		}
-		if card.Source.Kind == "analysis" && card.Confidence > 0.7 {
+		inferenceKinds := map[string]bool{"analysis": true, "experiment": true, "observation": true, "inference": true}
+		if inferenceKinds[card.Source.Kind] && card.Confidence > 0.7 {
 			issues = append(issues, "high_confidence_inference")
 		}
 

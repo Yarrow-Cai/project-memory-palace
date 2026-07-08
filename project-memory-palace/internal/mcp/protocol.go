@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"strings"
 )
 
 type Request struct {
@@ -116,7 +117,11 @@ func (s *StdioServer) Serve() error {
 			if args == nil { args = map[string]any{} }
 			result, err := s.Registry.Dispatch(name, args)
 			if err != nil {
-				resp = NewErrorResponse(req.ID, -32603, err.Error())
+				code := -32603
+				if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be") {
+					code = -32602
+				}
+				resp = NewErrorResponse(req.ID, code, err.Error())
 			} else {
 				resultJSON, _ := json.Marshal(result)
 				resp = NewResponse(req.ID, map[string]any{
