@@ -61,10 +61,19 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 				"properties": map[string]any{
 					"type": map[string]any{
 						"type":        "string",
-						"description": "Memory type",
-						"enum":        typeEnum,
-					},
-					"title": map[string]any{
+				"description": "Memory type",
+				"enum":        typeEnum,
+			},
+			"source_agent": map[string]any{
+				"type":        "string",
+				"description": "创建此记忆的 AI agent 标识 (如 claude-code, codex-cli, hermes-agent)",
+			},
+			"knowledge_kind": map[string]any{
+				"type":        "string",
+				"description": "知识类型: fact(事实/不会过时), interpretation(解释/可能过时), rule(规则/应遵循)",
+				"enum":        []string{"fact", "interpretation", "rule"},
+			},
+			"title": map[string]any{
 						"type":        "string",
 						"description": "Memory title — concise and descriptive",
 					},

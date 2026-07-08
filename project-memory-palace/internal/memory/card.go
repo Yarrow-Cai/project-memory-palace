@@ -34,6 +34,8 @@ type MemoryCard struct {
 	Relations     map[string][]string `yaml:"relations" json:"relations"`
 	Priority      int                 `yaml:"priority" json:"priority"` // 1-5, default 3
 	ExpiresAt     string              `yaml:"expires_at" json:"expires_at"` // ISO timestamp, empty = never expires
+	SourceAgent   string              `yaml:"source_agent" json:"source_agent"`
+	KnowledgeKind string              `yaml:"knowledge_kind" json:"knowledge_kind"`
 	CreatedAt     string              `yaml:"created_at" json:"created_at"`
 	UpdatedAt     string              `yaml:"updated_at" json:"updated_at"`
 }

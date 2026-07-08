@@ -355,6 +355,10 @@ func cmdServeWeb(args []string) int {
 		results, err := svc.HotMemories(limit)
 		writeWebJSONList(w, results, err)
 	})
+	http.HandleFunc("/api/decay", func(w http.ResponseWriter, r *http.Request) {
+		results, err := svc.ListRecent(1000, 0, map[string]any{"status": "active"})
+		writeWebJSONList(w, results, err)
+	})
 	http.HandleFunc("/api/open", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		result, err := svc.OpenMemory(id)

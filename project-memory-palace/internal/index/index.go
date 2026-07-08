@@ -129,6 +129,10 @@ func (idx *MemoryIndex) Initialize() error {
 	db.Exec("ALTER TABLE memories ADD COLUMN last_accessed_at TEXT NOT NULL DEFAULT ''")
 	// Auto-expire cards with past expires_at
 	db.Exec("UPDATE memories SET status='expired' WHERE status='active' AND expires_at != '' AND expires_at <= datetime('now')")
+	// Migration: add source_agent column (added in schema v5)
+	db.Exec("ALTER TABLE memories ADD COLUMN source_agent TEXT NOT NULL DEFAULT ''")
+	// Migration: add knowledge_kind column (added in schema v5)
+	db.Exec("ALTER TABLE memories ADD COLUMN knowledge_kind TEXT NOT NULL DEFAULT ''")
 	return nil
 }
 
@@ -166,8 +170,8 @@ func doUpsert(tx *sql.Tx, card *memory.MemoryCard) error {
 	if err != nil { return fmt.Errorf("marshal modules: %w", err) }
 	pathsJSON, err := json.Marshal(card.Scope.Paths)
 	if err != nil { return fmt.Errorf("marshal paths: %w", err) }
-	q := `INSERT INTO memories(id,type,status,title,summary,source_kind,confidence,priority,tags_json,modules_json,paths_json,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET type=excluded.type,status=excluded.status,title=excluded.title,summary=excluded.summary,source_kind=excluded.source_kind,confidence=excluded.confidence,priority=excluded.priority,tags_json=excluded.tags_json,modules_json=excluded.modules_json,paths_json=excluded.paths_json,expires_at=excluded.expires_at,updated_at=excluded.updated_at`
-	_, err = tx.Exec(q, card.ID, card.Type, card.Status, card.Title, card.Summary, card.Source.Kind, card.Confidence, card.Priority, string(tagsJSON), string(modsJSON), string(pathsJSON), card.ExpiresAt, card.UpdatedAt)
+	q := `INSERT INTO memories(id,type,status,title,summary,source_kind,confidence,priority,tags_json,modules_json,paths_json,expires_at,updated_at,source_agent,knowledge_kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET type=excluded.type,status=excluded.status,title=excluded.title,summary=excluded.summary,source_kind=excluded.source_kind,confidence=excluded.confidence,priority=excluded.priority,tags_json=excluded.tags_json,modules_json=excluded.modules_json,paths_json=excluded.paths_json,expires_at=excluded.expires_at,updated_at=excluded.updated_at,source_agent=excluded.source_agent,knowledge_kind=excluded.knowledge_kind`
+	_, err = tx.Exec(q, card.ID, card.Type, card.Status, card.Title, card.Summary, card.Source.Kind, card.Confidence, card.Priority, string(tagsJSON), string(modsJSON), string(pathsJSON), card.ExpiresAt, card.UpdatedAt, card.SourceAgent, card.KnowledgeKind)
 	if err != nil { return fmt.Errorf("upsert: %w", err) }
 	if _, err := tx.Exec("DELETE FROM memory_fts WHERE id=?", card.ID); err != nil { return fmt.Errorf("upsert fts delete: %w", err) }
 	if _, err := tx.Exec("INSERT INTO memory_fts(id,title,summary,content,tags,modules,paths) VALUES(?,?,?,?,?,?,?)", card.ID, ftsPreprocess(card.Title), ftsPreprocess(card.Summary), ftsPreprocess(card.Content), ftsPreprocess(strings.Join(card.Tags," ")), ftsPreprocess(strings.Join(card.Scope.Modules," ")), ftsPreprocess(strings.Join(card.Scope.Paths," "))); err != nil { return fmt.Errorf("upsert fts insert: %w", err) }
@@ -249,7 +253,7 @@ func (idx *MemoryIndex) Search(query string, filters map[string]any, limit int) 
 		where += " AND EXISTS(SELECT 1 FROM memory_paths mp WHERE mp.memory_id=m.id AND mp.path IN (" + pp + "))"
 	}
 	where += " AND (m.expires_at = '' OR m.expires_at > datetime('now'))"
-	q := fmt.Sprintf("SELECT m.id,m.type,m.status,m.title,m.summary,m.source_kind,m.confidence,m.updated_at,m.access_count,m.last_accessed_at FROM memory_fts JOIN memories m ON m.id=memory_fts.id WHERE memory_fts MATCH ? AND %s ORDER BY rank ASC,m.updated_at DESC LIMIT ?", where)
+	q := fmt.Sprintf("SELECT m.id,m.type,m.status,m.title,m.summary,m.source_kind,m.confidence,m.priority,m.updated_at,m.access_count,m.last_accessed_at FROM memory_fts JOIN memories m ON m.id=memory_fts.id WHERE memory_fts MATCH ? AND %s ORDER BY rank ASC,m.updated_at DESC LIMIT ?", where)
 	rows, err := db.Query(q, args...)
 	if err != nil { return nil, fmt.Errorf("search: %w", err) }
 	defer rows.Close()
@@ -257,9 +261,11 @@ func (idx *MemoryIndex) Search(query string, filters map[string]any, limit int) 
 	for rows.Next() {
 		var id, tp, st, title, summary, sk, upd, lastAcc string
 		var conf float64
+		var priority int
 		var accessCount int
-		rows.Scan(&id,&tp,&st,&title,&summary,&sk,&conf,&upd,&accessCount,&lastAcc)
-		results = append(results, map[string]any{"id":id,"type":tp,"status":st,"title":title,"summary":summary,"confidence":conf,"source_hint":sk,"matched_by":[]string{"fts"},"updated_at":upd,"access_count":accessCount,"last_accessed_at":lastAcc})
+		rows.Scan(&id,&tp,&st,&title,&summary,&sk,&conf,&priority,&upd,&accessCount,&lastAcc)
+		ep := EffectivePriority(priority, lastAcc)
+		results = append(results, map[string]any{"id":id,"type":tp,"status":st,"title":title,"summary":summary,"confidence":conf,"priority":priority,"source_hint":sk,"matched_by":[]string{"fts"},"updated_at":upd,"access_count":accessCount,"last_accessed_at":lastAcc,"effective_priority":ep})
 	}
 	return results, rows.Err()
 }
@@ -306,7 +312,8 @@ func (idx *MemoryIndex) Recent(limit, offset int, filters map[string]any) ([]map
 		var conf float64
 		var accessCount int
 		rows.Scan(&id,&tp,&st,&priority,&title,&summary,&sk,&conf,&upd,&accessCount,&lastAcc)
-		results = append(results, map[string]any{"id":id,"type":tp,"status":st,"priority":priority,"title":title,"summary":summary,"confidence":conf,"source_hint":sk,"matched_by":[]string{"recent"},"updated_at":upd,"access_count":accessCount,"last_accessed_at":lastAcc})
+		ep := EffectivePriority(priority, lastAcc)
+		results = append(results, map[string]any{"id":id,"type":tp,"status":st,"priority":priority,"title":title,"summary":summary,"confidence":conf,"source_hint":sk,"matched_by":[]string{"recent"},"updated_at":upd,"access_count":accessCount,"last_accessed_at":lastAcc,"effective_priority":ep})
 	}
 	return results, rows.Err()
 }

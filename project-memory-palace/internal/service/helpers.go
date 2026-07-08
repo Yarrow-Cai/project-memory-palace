@@ -61,6 +61,12 @@ func buildCard(cardID string, payload map[string]any) memory.MemoryCard {
 	if exp, ok := payload["expires_at"].(string); ok {
 		card.ExpiresAt = exp
 	}
+	if sa, ok := payload["source_agent"].(string); ok {
+		card.SourceAgent = sa
+	}
+	if kk, ok := payload["knowledge_kind"].(string); ok {
+		card.KnowledgeKind = kk
+	}
 	return card
 }
 
@@ -82,6 +88,8 @@ func cardToMap(card *memory.MemoryCard) map[string]any {
 		"tags": card.Tags, "relations": card.Relations,
 		"expires_at": card.ExpiresAt,
 		"created_at": card.CreatedAt, "updated_at": card.UpdatedAt,
+		"source_agent": card.SourceAgent,
+		"knowledge_kind": card.KnowledgeKind,
 	}
 }
 
@@ -105,6 +113,8 @@ func mapToCard(m map[string]any) *memory.MemoryCard {
 	if v, ok := m["expires_at"].(string); ok { card.ExpiresAt = v }
 	if v, ok := m["created_at"].(string); ok { card.CreatedAt = v }
 	if v, ok := m["updated_at"].(string); ok { card.UpdatedAt = v }
+	if v, ok := m["source_agent"].(string); ok { card.SourceAgent = v }
+	if v, ok := m["knowledge_kind"].(string); ok { card.KnowledgeKind = v }
 	card.Tags = toStringSlice(m["tags"])
 	if src, ok := m["source"].(map[string]any); ok {
 		if k, ok := src["kind"].(string); ok { card.Source.Kind = k }

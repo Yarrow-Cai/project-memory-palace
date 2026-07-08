@@ -32,6 +32,7 @@ var RequiredFields = []string{
 	"schema_version", "id", "type", "status", "confidence",
 	"title", "summary", "content", "source", "scope",
 	"tags", "relations", "created_at", "updated_at",
+	"source_agent", "knowledge_kind",
 }
 
 const DefaultConfidence = 0.5
@@ -43,7 +44,10 @@ var RememberRequiredFields = []string{"content", "summary", "title", "type"}
 var UpdateAllowedFields = map[string]bool{
 	"confidence": true, "reason": true, "relations": true,
 	"status": true, "tags": true, "expires_at": true,
+	"source_agent": true, "knowledge_kind": true,
 }
+
+var KnowledgeKinds = map[string]bool{"fact": true, "interpretation": true, "rule": true}
 
 // sortedKeys returns the sorted keys of a map[string]bool.
 // Used by MCP tool schema generation for stable enum ordering.
