@@ -208,7 +208,9 @@ func (s *SSEServer) HandleMessage(w http.ResponseWriter, r *http.Request) {
 		result, err := s.Registry.Dispatch(name, args)
 		if err != nil {
 		code := -32603
-		if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be") {
+		if strings.Contains(err.Error(), "unknown") {
+			code = -32601
+		} else if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be") {
 			code = -32602
 		}
 		resp = NewErrorResponse(req.ID, code, err.Error())
