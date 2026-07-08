@@ -486,7 +486,15 @@ function renderDetail(d){
     '<button class="danger" onclick="markStatus(\'rejected\')">✕ 废弃</button>'+
     '<button onclick="markStatus(\'expired\')">⏰ 过期</button>'+
     '<button onclick="copyID()">📋 复制 ID</button>'+
-    '<button class="danger" onclick="deleteMemory()">🗑 删除</button></div>';
+    '<button class="danger" onclick="deleteMemory()">🗑 删除</button></div>'+
+    '<div class="graph-section" id="graphSection" style="display:none">'+
+      '<div class="graph-header" onclick="toggleGraph()" id="graphHeader">'+
+        '<span class="toggle-arrow">▶</span> 📊 关系图谱'+
+      '</div>'+
+      '<div class="graph-svg-wrap" id="graphSvgWrap" style="display:none">'+
+        '<svg id="relationGraphSvg"></svg>'+
+      '</div>'+
+    '</div>';
   document.getElementById('tab-content').innerHTML=h;
 }
 
@@ -604,6 +612,271 @@ function loadRelations(id){
   });
 }
 
+
+// ===== Relation Graph =====
+var graphVisible = false;
+var currentCardType = null;
+var graphDataCache = null;
+
+function toggleGraph() {
+  graphVisible = !graphVisible;
+  var wrap = document.getElementById('graphSvgWrap');
+  var header = document.getElementById('graphHeader');
+  var arrow = header.querySelector('.toggle-arrow');
+  if (graphVisible) {
+    wrap.style.display = 'block';
+    header.classList.add('open');
+    arrow.textContent = '▼';
+    if (currentID && !graphDataCache) {
+      loadRelationGraph(currentID, currentCardType);
+    } else if (currentID && graphDataCache) {
+      renderGraph(graphDataCache, currentCardType);
+    }
+  } else {
+    wrap.style.display = 'none';
+    header.classList.remove('open');
+    arrow.textContent = '▶';
+  }
+}
+
+function loadRelationGraph(id, cardType) {
+  currentCardType = cardType;
+  var svgWrap = document.getElementById('graphSvgWrap');
+  svgWrap.innerHTML = '<div class="graph-empty"><span class="spinner-sm"></span> 加载图谱...</div>';
+  api('/api/relations?id=' + encodeURIComponent(id) + '&direction=both&depth=2').then(function(d) {
+    graphDataCache = d;
+    if (graphVisible || svgWrap.style.display === 'block') {
+      renderGraph(d, cardType);
+    }
+  }).catch(function() {
+    svgWrap.innerHTML = '<div class="graph-empty">图谱加载失败</div>';
+  });
+}
+
+function renderGraph(relData, centerType) {
+  var svgWrap = document.getElementById('graphSvgWrap');
+  var svg = document.getElementById('relationGraphSvg');
+  var nodes = [];
+  var edges = [];
+  var nodeMap = {};
+  var centerId = relData.id || currentID;
+
+  // Type colors
+  var typeColors = {
+    convention: '#34d399', decision: '#fbbf24', bugfix: '#f87171',
+    design: '#818cf8', module: '#a78bfa', project_goal: '#fb923c',
+    change_reason: '#38bdf8', open_question: '#9ca3af'
+  };
+  var defaultColor = '#6b6e75';
+
+  // If graph data from depth traversal is available, use it
+  if (relData.graph && relData.graph.nodes && relData.graph.nodes.length) {
+    relData.graph.nodes.forEach(function(n) {
+      var nd = { id: n.id, title: n.title || n.id, type: n.type || '', depth: n.depth || 0 };
+      nodeMap[n.id] = nd;
+      nodes.push(nd);
+    });
+    if (relData.graph.edges) {
+      relData.graph.edges.forEach(function(e) {
+        edges.push({ from: e.from, to: e.to, relation: e.relation, direction: e.direction });
+      });
+    }
+  } else {
+    // Build from outgoing + incoming
+    var titles = relData.card_titles || {};
+    // Center node
+    var cn = { id: centerId, title: titles[centerId] || centerId, type: centerType || '' };
+    nodes.push(cn);
+    nodeMap[centerId] = cn;
+
+    var outgoing = relData.outgoing || {};
+    var incoming = relData.incoming || {};
+
+    function addNode(id, type) {
+      if (!nodeMap[id]) {
+        var nd = { id: id, title: titles[id] || id, type: type || '' };
+        nodeMap[id] = nd;
+        nodes.push(nd);
+      }
+    }
+
+    for (var relKind in outgoing) {
+      var targets = outgoing[relKind] || [];
+      targets.forEach(function(tid) {
+        addNode(tid, '');
+        edges.push({ from: centerId, to: tid, relation: relKind, direction: 'outgoing' });
+      });
+    }
+    for (var relKind in incoming) {
+      var sources = incoming[relKind] || [];
+      sources.forEach(function(sid) {
+        addNode(sid, '');
+        edges.push({ from: sid, to: centerId, relation: relKind, direction: 'incoming' });
+      });
+    }
+  }
+
+  // If no related nodes besides center, show empty
+  if (nodes.length <= 1 && edges.length === 0) {
+    svgWrap.innerHTML = '<div class="graph-empty">无关联卡片</div>';
+    return;
+  }
+
+  // Filter duplicate edges
+  var edgeSeen = {};
+  edges = edges.filter(function(e) {
+    var key = e.from + '|' + e.to + '|' + e.relation;
+    if (edgeSeen[key]) return false;
+    edgeSeen[key] = true;
+    return true;
+  });
+
+  // Setup SVG
+  var containerWidth = svgWrap.clientWidth || 600;
+  var svgHeight = 300;
+  svg.setAttribute('viewBox', '0 0 ' + containerWidth + ' ' + svgHeight);
+  svg.setAttribute('width', containerWidth);
+  svg.setAttribute('height', svgHeight);
+  svg.innerHTML = '';
+
+  // Initialize positions
+  var cx = containerWidth / 2;
+  var cy = svgHeight / 2;
+
+  nodes.forEach(function(n, i) {
+    if (n.id === centerId) {
+      n.x = cx;
+      n.y = cy;
+      n.fx = cx; n.fy = cy;
+    } else {
+      var angle = (i / nodes.length) * 2 * Math.PI;
+      var radius = Math.min(cx, cy) * 0.5;
+      n.x = cx + Math.cos(angle) * radius * (0.5 + Math.random() * 0.5);
+      n.y = cy + Math.sin(angle) * radius * (0.5 + Math.random() * 0.5);
+    }
+    n.vx = 0; n.vy = 0;
+  });
+
+  // Force simulation
+  var iterations = 20;
+  var repulsion = 2000;
+  var springLen = 80;
+  var springK = 0.1;
+  var damping = 0.85;
+  var minDist = 30;
+
+  for (var iter = 0; iter < iterations; iter++) {
+    for (var i = 0; i < nodes.length; i++) {
+      for (var j = i + 1; j < nodes.length; j++) {
+        var a = nodes[i], b = nodes[j];
+        var dx = b.x - a.x, dy = b.y - a.y;
+        var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        if (dist < minDist) dist = minDist;
+        var force = repulsion / (dist * dist);
+        var fx = (dx / dist) * force;
+        var fy = (dy / dist) * force;
+        a.vx -= fx; a.vy -= fy;
+        b.vx += fx; b.vy += fy;
+      }
+    }
+
+    edges.forEach(function(e) {
+      var a = nodeMap[e.from], b = nodeMap[e.to];
+      if (!a || !b) return;
+      var dx = b.x - a.x, dy = b.y - a.y;
+      var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      var displacement = dist - springLen;
+      var force = springK * displacement;
+      var fx = (dx / dist) * force;
+      var fy = (dy / dist) * force;
+      a.vx += fx; a.vy += fy;
+      b.vx -= fx; b.vy -= fy;
+    });
+
+    nodes.forEach(function(n) {
+      if (n.fx !== undefined) return;
+      n.vx *= damping;
+      n.vy *= damping;
+      n.x += n.vx;
+      n.y += n.vy;
+      n.x = Math.max(20, Math.min(containerWidth - 20, n.x));
+      n.y = Math.max(15, Math.min(svgHeight - 15, n.y));
+    });
+  }
+
+  // Render
+  var nodeRadius = 14;
+  var centerRadius = 22;
+  var relLabels = {supersedes:'替代', superseded_by:'被替代', depends_on:'依赖', contradicts:'矛盾',
+    abstracts:'抽象', implements:'实现', derives_from:'派生', replaces:'取代',
+    documents:'文档', explains:'解释', caused_by:'因果', related_to:'关联'};
+
+  // Edges
+  edges.forEach(function(e) {
+    var a = nodeMap[e.from], b = nodeMap[e.to];
+    if (!a || !b) return;
+    var midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
+    var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
+    line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
+    line.setAttribute('class', 'graph-edge');
+    g.appendChild(line);
+    var label = relLabels[e.relation] || e.relation;
+    var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', midX); text.setAttribute('y', midY - 4);
+    text.setAttribute('class', 'graph-edge-label');
+    text.textContent = label;
+    g.appendChild(text);
+    svg.appendChild(g);
+  });
+
+  // Nodes
+  nodes.forEach(function(n) {
+    var isCenter = (n.id === centerId);
+    var r = isCenter ? centerRadius : nodeRadius;
+    var color = typeColors[n.type] || defaultColor;
+    var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'graph-node' + (isCenter ? ' graph-node-center' : ''));
+    g.setAttribute('data-id', n.id);
+    if (!isCenter) {
+      g.addEventListener('click', function() { showDetail(n.id); });
+    }
+    var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', n.x); circle.setAttribute('cy', n.y);
+    circle.setAttribute('r', r);
+    circle.setAttribute('fill', color);
+    circle.setAttribute('stroke', 'var(--border2)');
+    circle.setAttribute('stroke-width', isCenter ? '2' : '1');
+    g.appendChild(circle);
+    var txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    txt.setAttribute('x', n.x); txt.setAttribute('y', n.y + 3);
+    txt.setAttribute('class', 'graph-node-text');
+    var displayTitle = n.title || n.id;
+    if (displayTitle.length > 10) displayTitle = displayTitle.substring(0, 9) + '\u2026';
+    txt.textContent = displayTitle;
+    var title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    title.textContent = (n.title || n.id) + ' [' + (n.type || 'unknown') + ']';
+    g.appendChild(title);
+    g.appendChild(txt);
+    svg.appendChild(g);
+  });
+
+  svgWrap.innerHTML = '';
+  svgWrap.appendChild(svg);
+}
+
+// Override loadRelations to also show graph section and load graph
+var origLoadRelations = loadRelations;
+loadRelations = function(id) {
+  origLoadRelations(id);
+  var graphSection = document.getElementById('graphSection');
+  if (graphSection) graphSection.style.display = 'block';
+  graphDataCache = null;
+  api('/api/open?id=' + id).then(function(d) {
+    currentCardType = d.type || '';
+  });
+};
 
 // ===== Tabs =====
 function switchTab(tab){
