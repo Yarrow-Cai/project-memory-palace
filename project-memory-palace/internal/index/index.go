@@ -629,6 +629,29 @@ func toAnySlice(ss []string) []any {
 	return result
 }
 
+// ListChangesSince returns active memories updated after the given timestamp.
+func (idx *MemoryIndex) ListChangesSince(since string, limit int) ([]map[string]any, error) {
+	if err := idx.Initialize(); err != nil { return nil, err }
+	db, err := idx.connect()
+	if err != nil { return nil, err }
+	if limit <= 0 { limit = 20 }
+	q := "SELECT id, type, status, title, summary, source_agent, updated_at FROM memories WHERE status='active' AND updated_at > ? ORDER BY updated_at DESC LIMIT ?"
+	rows, err := db.Query(q, since, limit)
+	if err != nil { return nil, fmt.Errorf("list changes since: %w", err) }
+	defer rows.Close()
+	var results []map[string]any
+	for rows.Next() {
+		var id, tp, st, title, summary, sa, upd string
+		if err := rows.Scan(&id, &tp, &st, &title, &summary, &sa, &upd); err != nil { return nil, err }
+		results = append(results, map[string]any{
+			"id": id, "type": tp, "status": st,
+			"title": title, "summary": summary,
+			"source_agent": sa, "updated_at": upd,
+		})
+	}
+	return results, rows.Err()
+}
+
 // HotMemories returns active memories ordered by access_count DESC.
 func (idx *MemoryIndex) HotMemories(limit int) ([]map[string]any, error) {
 	if err := idx.Initialize(); err != nil { return nil, err }

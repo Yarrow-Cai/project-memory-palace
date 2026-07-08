@@ -564,6 +564,12 @@ func (s *MemoryService) DecayMemories(limit int) ([]map[string]any, error) {
 	return s.idx.DecayAnalysis(limit)
 }
 
+// ListChangesSince returns active cards updated after the given timestamp.
+func (s *MemoryService) ListChangesSince(since string, limit int) ([]map[string]any, error) {
+	if err := s.InitProject(); err != nil { return nil, err }
+	return s.idx.ListChangesSince(since, limit)
+}
+
 func has(slice []string, item string) bool {
 	for _, s := range slice { if s == item { return true } }
 	return false

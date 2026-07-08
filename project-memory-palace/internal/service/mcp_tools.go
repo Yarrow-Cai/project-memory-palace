@@ -67,6 +67,10 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 	// 1. init_project
 	reg.Register("init_project", "初始化指定工程。返回该工程的 rules、recent activities 和 next-step guide。应先调用 init_workspace 了解可用工程，再用本工具初始化目标工程。", map[string]any{"type": "object", "properties": map[string]any{
 		"project": projectProp,
+		"since": map[string]any{
+			"type":        "string",
+			"description": "ISO timestamp — returns changes since this time (e.g. 2026-07-09T00:00:00Z)",
+		},
 	},
 	}, wrap(func(params map[string]any) (any, error) {
 	svc, _, err := ws.resolve(extractProject(params))
@@ -85,6 +89,13 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		}
 		recent, _ := svc.ListRecent(5, 0, nil)
 		result["recent"] = recent
+		// If `since` is provided, return cards changed since that timestamp
+		if since, ok := params["since"].(string); ok && since != "" {
+			changedCards, _ := svc.ListChangesSince(since, 20)
+			result["changes"] = changedCards
+			result["changes_since"] = since
+			result["change_count"] = len(changedCards)
+		}
 		result["next"] = []string{
 			"1. context_for_files paths=[<current files>] - auto-discover memories linked to files you're working on (no keywords needed!)",
 			"2. recall query=<keyword> - search project memory by topic or file path",
