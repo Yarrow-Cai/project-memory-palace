@@ -289,7 +289,7 @@ func (idx *MemoryIndex) Search(query string, filters map[string]any, limit int) 
 		where += " AND EXISTS(SELECT 1 FROM memory_paths mp WHERE mp.memory_id=m.id AND mp.path IN (" + pp + "))"
 	}
 	where += " AND (m.expires_at = '' OR m.expires_at > datetime('now'))"
-	q := fmt.Sprintf("SELECT m.id,m.type,m.status,m.title,m.summary,m.source_kind,m.confidence,m.priority,m.updated_at,m.access_count,m.last_accessed_at FROM memory_fts JOIN memories m ON m.id=memory_fts.id WHERE memory_fts MATCH ? AND %s ORDER BY rank ASC,m.updated_at DESC LIMIT ?", where)
+	q := fmt.Sprintf("SELECT m.id,m.type,m.status,m.title,m.summary,m.source_kind,m.confidence,m.priority,m.updated_at,m.access_count,m.last_accessed_at FROM memory_fts JOIN memories m ON m.id=memory_fts.id WHERE memory_fts MATCH ? AND %s ORDER BY CAST(m.priority AS REAL) * CASE WHEN m.last_accessed_at IS NULL OR m.last_accessed_at = '' THEN 0.25 WHEN julianday('now') - julianday(m.last_accessed_at) < 7 THEN 1.0 WHEN julianday('now') - julianday(m.last_accessed_at) < 30 THEN 0.85 WHEN julianday('now') - julianday(m.last_accessed_at) < 60 THEN 0.6 WHEN julianday('now') - julianday(m.last_accessed_at) < 180 THEN 0.4 ELSE 0.25 END DESC, rank LIMIT ?", where)
 	rows, err := db.Query(q, args...)
 	if err != nil { return nil, fmt.Errorf("search: %w", err) }
 	defer rows.Close()
@@ -336,7 +336,7 @@ func (idx *MemoryIndex) Recent(limit, offset int, filters map[string]any) ([]map
 	}
 	// Always filter out time-expired cards
 	where += " AND (expires_at = '' OR expires_at > datetime('now'))"
-	query := "SELECT id,type,status,priority,title,summary,source_kind,confidence,updated_at,access_count,last_accessed_at FROM memories WHERE 1=1" + where + " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+	query := "SELECT id,type,status,priority,title,summary,source_kind,confidence,updated_at,access_count,last_accessed_at FROM memories WHERE 1=1" + where + " ORDER BY CAST(priority AS REAL) * CASE WHEN last_accessed_at IS NULL OR last_accessed_at = '' THEN 0.25 WHEN julianday('now') - julianday(last_accessed_at) < 7 THEN 1.0 WHEN julianday('now') - julianday(last_accessed_at) < 30 THEN 0.85 WHEN julianday('now') - julianday(last_accessed_at) < 60 THEN 0.6 WHEN julianday('now') - julianday(last_accessed_at) < 180 THEN 0.4 ELSE 0.25 END DESC, access_count DESC, updated_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 	rows, err := db.Query(query, args...)
 	if err != nil { return nil, fmt.Errorf("recent: %w", err) }
@@ -471,12 +471,12 @@ func (idx *MemoryIndex) SearchByPaths(paths []string, limit int) ([]map[string]a
 	}
 	if len(conditions) == 0 { return nil, nil }
 
-	q := "SELECT DISTINCT m.id,m.type,m.status,m.title,m.summary,m.source_kind,m.confidence,m.priority,m.updated_at" +
+	q := "SELECT DISTINCT m.id,m.type,m.status,m.title,m.summary,m.source_kind,m.confidence,m.priority,m.updated_at,m.access_count,m.last_accessed_at" +
 		" FROM memories m" +
 		" WHERE m.status='active'" +
 		" AND (m.expires_at = '' OR m.expires_at > datetime('now'))" +
 		" AND (" + strings.Join(conditions, " OR ") + ")" +
-		" ORDER BY m.priority DESC, m.updated_at DESC LIMIT ?"
+		" ORDER BY CAST(m.priority AS REAL) * CASE WHEN m.last_accessed_at IS NULL OR m.last_accessed_at = '' THEN 0.25 WHEN julianday('now') - julianday(m.last_accessed_at) < 7 THEN 1.0 WHEN julianday('now') - julianday(m.last_accessed_at) < 30 THEN 0.85 WHEN julianday('now') - julianday(m.last_accessed_at) < 60 THEN 0.6 WHEN julianday('now') - julianday(m.last_accessed_at) < 180 THEN 0.4 ELSE 0.25 END DESC, m.updated_at DESC LIMIT ?"
 	args = append(args, limit)
 
 	rows, err := db.Query(q, args...)
@@ -485,11 +485,13 @@ func (idx *MemoryIndex) SearchByPaths(paths []string, limit int) ([]map[string]a
 
 	var results []map[string]any
 	for rows.Next() {
-		var id, tp, st, title, summary, sk, upd string
+		var id, tp, st, title, summary, sk, upd, lastAcc string
 		var conf float64
 		var priority int
-		rows.Scan(&id, &tp, &st, &title, &summary, &sk, &conf, &priority, &upd)
-		results = append(results, map[string]any{"id": id, "type": tp, "status": st, "title": title, "summary": summary, "confidence": conf, "priority": priority, "source_hint": sk, "matched_by": []string{"paths"}, "updated_at": upd})
+		var accessCount int
+		rows.Scan(&id, &tp, &st, &title, &summary, &sk, &conf, &priority, &upd, &accessCount, &lastAcc)
+		ep := EffectivePriority(priority, lastAcc)
+		results = append(results, map[string]any{"id": id, "type": tp, "status": st, "title": title, "summary": summary, "confidence": conf, "priority": priority, "source_hint": sk, "matched_by": []string{"paths"}, "updated_at": upd, "access_count": accessCount, "last_accessed_at": lastAcc, "effective_priority": ep})
 	}
 	return results, rows.Err()
 }
@@ -531,7 +533,8 @@ func (idx *MemoryIndex) HotMemories(limit int) ([]map[string]any, error) {
 		var conf float64
 		var accessCount int
 		rows.Scan(&id, &tp, &st, &priority, &title, &summary, &sk, &conf, &upd, &accessCount, &lastAcc)
-		results = append(results, map[string]any{"id": id, "type": tp, "status": st, "priority": priority, "title": title, "summary": summary, "confidence": conf, "source_hint": sk, "matched_by": []string{"hot"}, "updated_at": upd, "access_count": accessCount, "last_accessed_at": lastAcc})
+		ep := EffectivePriority(priority, lastAcc)
+		results = append(results, map[string]any{"id": id, "type": tp, "status": st, "priority": priority, "title": title, "summary": summary, "confidence": conf, "source_hint": sk, "matched_by": []string{"hot"}, "updated_at": upd, "access_count": accessCount, "last_accessed_at": lastAcc, "effective_priority": ep})
 	}
 	return results, rows.Err()
 }
