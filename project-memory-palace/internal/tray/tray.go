@@ -55,6 +55,7 @@ var (
 	recentsPath string
 	recents     []string
 	iconICO     = buildICO()
+	sseServer   *mcp.SSEServer
 )
 
 func init() {
@@ -173,6 +174,7 @@ func onReady() {
 }
 
 func onExit() {
+	if sseServer != nil { sseServer.Stop() }
 	if mcpCmd != nil { mcpCmd.Process.Kill() }
 }
 
@@ -218,7 +220,7 @@ func startAPI() {
 			return h(params)
 		}
 	})
-	sseServer := mcp.NewSSEServer(reg)
+	sseServer = mcp.NewSSEServer(reg)
 
 	http.HandleFunc("/", serveIndex)
 	http.HandleFunc("/sse", sseServer.HandleSSE)
