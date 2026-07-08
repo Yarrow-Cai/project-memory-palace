@@ -1,4 +1,4 @@
-﻿package service
+package service
 
 import (
 	"fmt"
@@ -65,13 +65,25 @@ func (s *MemoryService) Recall(query string, filters map[string]any, limit int) 
 }
 
 func (s *MemoryService) OpenMemory(memoryID string) (map[string]any, error) {
-	if err := store.AssertMemoryLayout(s.projectRoot); err != nil { return nil, err }
-	cards, err := store.DiscoverCards(s.projectRoot)
-	if err != nil { return nil, err }
-	for _, card := range cards {
-		if card.ID == memoryID { return cardToMap(card), nil }
+	// Fast path: check SQLite index first (O(1)), then read single YAML file
+	meta, _ := s.idx.GetMemory(memoryID)
+	if meta == nil {
+		return nil, &MemoryNotFoundError{ID: memoryID}
 	}
-	return nil, &MemoryNotFoundError{ID: memoryID}
+	card := &memory.MemoryCard{
+		ID:   memoryID,
+		Type: meta["type"].(string),
+	}
+	filename := store.CardFilename(card)
+	if filename == "" {
+		return nil, &MemoryNotFoundError{ID: memoryID}
+	}
+	filePath := filepath.Join(store.CardsDir(s.projectRoot), filename)
+	cardObj, err := store.ReadCard(filePath)
+	if err != nil {
+		return nil, &MemoryNotFoundError{ID: memoryID}
+	}
+	return cardToMap(cardObj), nil
 }
 
 func (s *MemoryService) ListRecent(limit, offset int, filters map[string]any) ([]map[string]any, error) {
