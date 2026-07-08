@@ -194,3 +194,51 @@ func toStringSlice(v any) []string {
 	default: return nil
 	}
 }
+
+// commonWords is a set of words to exclude from significant-word comparison.
+var commonWords = map[string]bool{
+	"the": true, "is": true, "a": true, "an": true, "of": true, "to": true,
+	"in": true, "for": true, "on": true, "and": true, "or": true, "be": true,
+	"it": true, "as": true, "at": true, "by": true, "this": true, "that": true,
+	"with": true, "from": true, "are": true, "was": true,
+}
+
+// shareSignificantWords returns the number of significant words (len ≥ 3, not
+// in commonWords) that appear in both lowercase titles.
+func shareSignificantWords(a, b string) int {
+	wordsA := splitWords(strings.ToLower(a))
+	wordsB := splitWords(strings.ToLower(b))
+	set := make(map[string]bool, len(wordsA))
+	for _, w := range wordsA {
+		if len(w) >= 3 && !commonWords[w] {
+			set[w] = true
+		}
+	}
+	count := 0
+	for _, w := range wordsB {
+		if set[w] {
+			count++
+			delete(set, w) // count each word once
+		}
+	}
+	return count
+}
+
+func splitWords(s string) []string {
+	var result []string
+	word := ""
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			word += string(r)
+		} else {
+			if len(word) > 0 {
+				result = append(result, word)
+				word = ""
+			}
+		}
+	}
+	if len(word) > 0 {
+		result = append(result, word)
+	}
+	return result
+}

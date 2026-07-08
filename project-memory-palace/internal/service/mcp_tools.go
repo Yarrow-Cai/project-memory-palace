@@ -203,7 +203,29 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		if !ok {
 			return nil, fmt.Errorf("memory parameter required")
 		}
-		return svc.Remember(mem)
+		result, err := svc.Remember(mem)
+		if err != nil { return nil, err }
+		// Dedup hint: check for similar cards after creation
+		title, _ := mem["title"].(string)
+		if title != "" {
+			similar, _ := svc.Recall(title, nil, 3)
+			cardID, _ := result["id"].(string)
+			var filtered []map[string]any
+			for _, s := range similar {
+				if s["id"] != cardID {
+					filtered = append(filtered, map[string]any{
+						"id":    s["id"],
+						"title": s["title"],
+						"type":  s["type"],
+					})
+				}
+			}
+			if len(filtered) > 0 {
+				result["dedup_hint"] = "Similar cards exist"
+				result["similar"] = filtered
+			}
+		}
+		return result, nil
 	}))
 
 	// 3. recall

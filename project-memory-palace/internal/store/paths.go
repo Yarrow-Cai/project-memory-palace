@@ -19,5 +19,7 @@ func ConfigPath(projectRoot string) string { return filepath.Join(MemoryDir(proj
 // RulesPath returns the path to agent-rules.yaml.
 func RulesPath(projectRoot string) string { return filepath.Join(RulesDir(projectRoot), "agent-rules.yaml") }
 
+func HistoryDir(projectRoot string) string { return filepath.Join(MemoryDir(projectRoot), "history") }
+
 // IndexPath returns the path to index.sqlite3.
 func IndexPath(projectRoot string) string { return filepath.Join(MemoryDir(projectRoot), "index.sqlite3") }
