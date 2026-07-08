@@ -3,6 +3,7 @@
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/atop/project-memory-palace/internal/audit"
@@ -647,5 +648,74 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 			depth = int(v)
 		}
 		return svc.GetRelations(id, direction, depth)
+	}))
+
+	// 18. check_duplicates
+	reg.Register("check_duplicates", "检查是否存在相似的记忆卡片。在 write new memory 之前调用，避免创建重复卡片。", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"project": projectProp,
+			"title": map[string]any{
+				"type":        "string",
+				"description": "待检查的标题",
+			},
+			"content": map[string]any{
+				"type":        "string",
+				"description": "待检查的内容（可选）",
+			},
+			"threshold": map[string]any{
+				"type":        "number",
+				"description": "相似度阈值（默认 0.3）",
+				"minimum":     float64(0),
+				"maximum":     float64(1),
+			},
+		},
+		"required": []string{"title"},
+	}, wrap(func(params map[string]any) (any, error) {
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil {
+			return nil, err
+		}
+		title, _ := params["title"].(string)
+		if title == "" {
+			return nil, fmt.Errorf("title parameter required")
+		}
+		threshold := 0.3
+		if v, ok := params["threshold"].(float64); ok {
+			threshold = v
+		}
+		// FTS5 search on title via Recall
+		results, err := svc.Recall(title, nil, 10)
+		if err != nil {
+			return nil, err
+		}
+		var suggestions []map[string]any
+		hasDuplicates := false
+		titleLower := strings.ToLower(strings.TrimSpace(title))
+		for _, r := range results {
+			rt, _ := r["title"].(string)
+			rtLower := strings.ToLower(strings.TrimSpace(rt))
+			var score float64
+			if titleLower == rtLower {
+				score = 1.0
+			} else if shareSignificantWords(titleLower, rtLower) >= 2 {
+				score = 0.7
+			} else {
+				score = 0.4
+			}
+			if score >= threshold {
+				hasDuplicates = true
+				suggestions = append(suggestions, map[string]any{
+					"id":               r["id"],
+					"title":            rt,
+					"type":             r["type"],
+					"similarity_score": score,
+				})
+			}
+		}
+		return map[string]any{
+			"has_duplicates": hasDuplicates,
+			"suggestions":    suggestions,
+		}, nil
 	}))
 }
