@@ -490,23 +490,31 @@ http.HandleFunc("/api/project", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"recents": tray.RecentList()})
 	})
-	http.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
+http.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
 		svc, _, err := ws.Resolve("")
 		if err != nil { writeWebJSONRaw(w, nil, err); return }
-		data, err := os.ReadFile(store.RulesPath(svc.ProjectRoot()))
-		if err != nil {
-			writeWebJSONRaw(w, nil, fmt.Errorf("rules not found"))
-			return
-		}
-		mdPath := store.RulesPath(svc.ProjectRoot())
-		mdPath = mdPath[:len(mdPath)-len(".yaml")] + ".md"
+		yamlPath := store.RulesPath(svc.ProjectRoot())
+		data, yamlErr := os.ReadFile(yamlPath)
+		mdPath := strings.TrimSuffix(yamlPath, ".yaml") + ".md"
 		mdData, mdErr := os.ReadFile(mdPath)
 		w.Header().Set("Content-Type", "application/json")
-		response := map[string]any{"yaml_exists": err == nil}
-		if err == nil { response["yaml"] = string(data) }
+		response := map[string]any{"yaml_exists": yamlErr == nil}
+		if yamlErr == nil { response["yaml"] = string(data) }
 		if mdErr == nil { response["markdown"] = string(mdData) }
 		json.NewEncoder(w).Encode(response)
 	})
+	http.HandleFunc("/api/relations", func(w http.ResponseWriter, r *http.Request) {
+		svc, _, err := ws.Resolve("")
+		if err != nil { writeWebJSONRaw(w, nil, err); return }
+		id := r.URL.Query().Get("id")
+		if id == "" { writeWebJSONRaw(w, nil, fmt.Errorf("id parameter required")); return }
+		direction := r.URL.Query().Get("direction")
+		if direction == "" { direction = "both" }
+		depth := service.ParseIntParam(r.URL.Query().Get("depth"), 1)
+		result, err := svc.GetRelations(id, direction, depth)
+		writeWebJSONRaw(w, result, err)
+	})
+
 	http.HandleFunc("/api/workspace/refresh", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			writeWebJSONRaw(w, nil, fmt.Errorf("POST required"))

@@ -430,18 +430,13 @@ func handleRecents(w http.ResponseWriter, r *http.Request) {
 
 func handleRules(w http.ResponseWriter, r *http.Request) {
 	mu.Lock(); defer mu.Unlock()
-	data, err := os.ReadFile(store.RulesPath(svc.ProjectRoot()))
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"error": "rules not found"})
-		return
-	}
-	mdPath := store.RulesPath(svc.ProjectRoot())
-	mdPath = mdPath[:len(mdPath)-len(".yaml")] + ".md"
+	yamlPath := store.RulesPath(svc.ProjectRoot())
+	data, yamlErr := os.ReadFile(yamlPath)
+	mdPath := strings.TrimSuffix(yamlPath, ".yaml") + ".md"
 	mdData, mdErr := os.ReadFile(mdPath)
 	w.Header().Set("Content-Type", "application/json")
-	response := map[string]any{}
-	if err == nil { response["yaml"] = string(data) }
+	response := map[string]any{"yaml_exists": yamlErr == nil}
+	if yamlErr == nil { response["yaml"] = string(data) }
 	if mdErr == nil { response["markdown"] = string(mdData) }
 	json.NewEncoder(w).Encode(response)
 }
