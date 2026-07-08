@@ -30,8 +30,41 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		"description": "目标工程名称。不填则使用默认工程（第一个发现的工程）。可用 list_projects 查看所有可用工程。",
 	}
 
+	// 0. init_workspace
+	reg.Register("init_workspace", "初始化工作区。扫描所有可用工程，返回工程列表和简要状态。应在每个会话开始时首先调用。不创建任何文件，纯只读。", map[string]any{
+		"type": "object", "properties": map[string]any{},
+	}, wrap(func(params map[string]any) (any, error) {
+		projects, err := ws.ListProjects()
+		if err != nil { return nil, err }
+		var digest []map[string]any
+		for _, p := range projects {
+			name, _ := p["name"].(string)
+			if svcName, _, err := ws.resolve(name); err == nil {
+				recent, _ := svcName.ListRecent(3, 0, nil)
+				cardCount, _ := svcName.Count(nil)
+				digest = append(digest, map[string]any{
+					"name":       name,
+					"card_count": cardCount,
+					"recent":     recent,
+					"is_default": p["is_default"],
+				})
+			}
+		}
+		return map[string]any{
+			"workspace":  ws.workspaceDir,
+			"projects":   projects,
+			"total_projects": len(projects),
+			"digest":     digest,
+			"next": []string{
+				"1. init_project project=<name> - 初始化并获取指定工程的 rules + recent",
+				"2. context_for_files paths=[...] - 根据文件自动关联工程记忆",
+				"3. recall_all query=<keyword> - 跨所有工程搜索",
+			},
+		}, nil
+	}))
+
 	// 1. init_project
-	reg.Register("init_project", "Initialize Project Memory Palace for this project. Call this FIRST — returns project context (active rules, recent activity, next-step guide) in one shot. Creates .project-memory/ directory tree. Safe to call repeatedly (idempotent).", map[string]any{"type": "object", "properties": map[string]any{
+	reg.Register("init_project", "初始化指定工程。返回该工程的 rules、recent activities 和 next-step guide。应先调用 init_workspace 了解可用工程，再用本工具初始化目标工程。", map[string]any{"type": "object", "properties": map[string]any{
 		"project": projectProp,
 	},
 	}, wrap(func(params map[string]any) (any, error) {
@@ -57,8 +90,6 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 			"3. open_memory id=<id> - get full card details when summary is not enough",
 			"4. remember memory={...} - persist new knowledge after completing work",
 		}
-		allProjects, _ := ws.ListProjects()
-		result["available_projects"] = allProjects
 		return result, nil
 	}))
 
@@ -457,15 +488,22 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		"required": []string{"paths"},
 	}, wrap(func(params map[string]any) (any, error) {
 	project := extractProject(params)
+	autoDetected := false
 	if project == "" {
 	    rawPaths, ok := params["paths"].([]any)
 	    if ok && len(rawPaths) > 0 {
 	        paths := make([]string, len(rawPaths))
 	        for ip, p := range rawPaths { paths[ip] = fmt.Sprint(p) }
-	        project = ws.AutoDetect(paths)
+	        detected := ws.AutoDetect(paths)
+	        if detected != ws.defaultProj || len(ws.projects) == 1 {
+	            project = detected
+	            autoDetected = true
+	        } else {
+	            project = detected
+	        }
 	    }
 	}
-	svc, _, err := ws.resolve(project)
+	svc, projName, err := ws.resolve(project)
 	if err != nil { return nil, err }
 		paths := toStringSlice(params["paths"])
 		if len(paths) == 0 { return map[string]any{"results": []map[string]any{}, "matched_files": 0}, nil }
@@ -473,7 +511,12 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		if v, ok := params["limit"].(float64); ok { limit = int(v) }
 		results, err := svc.ContextForFiles(paths, limit)
 		if err != nil { return nil, err }
-		return map[string]any{"results": results, "matched_files": len(paths)}, nil
+		result := map[string]any{"results": results, "matched_files": len(paths)}
+		if autoDetected {
+			result["project"] = projName
+			result["auto_detected"] = true
+		}
+		return result, nil
 	}))
 	// 12. list_projects
 	reg.Register("list_projects", "列出当前工作区所有可用工程及其卡片数量。Agent 应在会话开始时调用此工具了解可用工程，然后在其他工具中使用 project 参数指定目标工程。", map[string]any{
@@ -488,4 +531,29 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		}, nil
 	}))
 
+	// 13. recall_all
+	reg.Register("recall_all", "跨所有工程搜索记忆。当你不知道某个知识点在哪个工程中时使用。结果中每条卡片带 project 字段标明来源工程。", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{"type": "string", "description": "搜索关键词"},
+			"filters": map[string]any{
+				"type": "object",
+				"description": "可选过滤: status (string), paths (string array)",
+				"properties": map[string]any{
+					"status": map[string]any{"type": "string"},
+					"paths":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				},
+			},
+			"limit": map[string]any{"type": "integer", "description": "最大返回数量 (默认 10)"},
+		},
+		"required": []string{"query"},
+	}, wrap(func(params map[string]any) (any, error) {
+		query, _ := params["query"].(string)
+		filters, _ := params["filters"].(map[string]any)
+		limit := 10
+		if v, ok := params["limit"].(float64); ok { limit = int(v) }
+		results, err := ws.RecallAll(query, filters, limit)
+		if err != nil { return nil, err }
+		return map[string]any{"results": results, "searched_projects": len(ws.projects)}, nil
+	}))
 }

@@ -65,6 +65,10 @@ func (s *MemoryService) Recall(query string, filters map[string]any, limit int) 
 	if len(results) > 0 {
 		_ = s.idx.RecordAccess(extractIDs(results))
 	}
+	projectName := filepath.Base(s.projectRoot)
+	for _, r := range results {
+		r["project"] = projectName
+	}
 	return results, nil
 }
 
@@ -89,6 +93,7 @@ func (s *MemoryService) OpenMemory(memoryID string) (map[string]any, error) {
 	}
 	result := cardToMap(cardObj)
 	_ = s.idx.RecordAccess([]string{cardObj.ID})
+	result["project"] = filepath.Base(s.projectRoot)
 	return result, nil
 }
 
@@ -98,6 +103,10 @@ func (s *MemoryService) ListRecent(limit, offset int, filters map[string]any) ([
 	if err != nil { return nil, err }
 	if len(results) > 0 {
 		_ = s.idx.RecordAccess(extractIDs(results))
+	}
+	projectName := filepath.Base(s.projectRoot)
+	for _, r := range results {
+		r["project"] = projectName
 	}
 	return results, nil
 }
@@ -190,7 +199,15 @@ func (s *MemoryService) SynthesizeRules() (*rule.RulesDocument, error) {
 // ContextForFiles returns memories associated with the given file paths.
 func (s *MemoryService) ContextForFiles(paths []string, limit int) ([]map[string]any, error) {
 	if err := s.InitProject(); err != nil { return nil, err }
-	return s.idx.SearchByPaths(paths, limit)
+	results, err := s.idx.SearchByPaths(paths, limit)
+	if err != nil {
+		return nil, err
+	}
+	projectName := filepath.Base(s.projectRoot)
+	for _, r := range results {
+		r["project"] = projectName
+	}
+	return results, nil
 }
 
 // HotMemories returns active memories sorted by access count descending.

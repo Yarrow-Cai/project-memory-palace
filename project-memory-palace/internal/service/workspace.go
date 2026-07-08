@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -109,10 +110,42 @@ func (ws *WorkspaceService) ListProjects() ([]map[string]any, error) {
 	return projects, nil
 }
 
+// RecallAll searches across ALL projects and returns merged results.
+// Each result includes a "project" field. Results are sorted by relevance
+// (priority DESC, updated_at DESC). Limits total results across all projects.
+func (ws *WorkspaceService) RecallAll(query string, filters map[string]any, limit int) ([]map[string]any, error) {
+	var all []map[string]any
+	for name, svc := range ws.projects {
+		results, err := svc.Recall(query, filters, limit)
+		if err != nil {
+			continue // skip broken projects
+		}
+		for _, r := range results {
+			r["project"] = name
+			all = append(all, r)
+		}
+	}
+	// Sort by priority DESC, then updated_at DESC
+	sort.Slice(all, func(i, j int) bool {
+		pi, _ := all[i]["priority"].(int)
+		pj, _ := all[j]["priority"].(int)
+		if pi != pj {
+			return pi > pj
+		}
+		ui, _ := all[i]["updated_at"].(string)
+		uj, _ := all[j]["updated_at"].(string)
+		return ui > uj
+	})
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
 // AutoDetect determines which project file paths belong to.
 // Returns project name with most path matches.
 func (ws *WorkspaceService) AutoDetect(paths []string) string {
-	bestProj := ws.defaultProj
+	bestProj := ""
 	bestCount := 0
 	for name, svc := range ws.projects {
 		root := svc.ProjectRoot()
@@ -127,6 +160,9 @@ func (ws *WorkspaceService) AutoDetect(paths []string) string {
 			bestCount = count
 			bestProj = name
 		}
+	}
+	if bestProj == "" {
+		return ws.defaultProj // fallback
 	}
 	return bestProj
 }
