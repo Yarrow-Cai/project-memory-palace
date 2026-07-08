@@ -461,13 +461,9 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 	    if ok && len(rawPaths) > 0 {
 	        paths := make([]string, len(rawPaths))
 	        for ip, p := range rawPaths { paths[ip] = fmt.Sprint(p) }
-	        detected := ws.AutoDetect(paths)
-	        if detected != ws.defaultProj || len(ws.projects) == 1 {
-	            project = detected
-	            autoDetected = true
-	        } else {
-	            project = detected
-	        }
+        detected := ws.AutoDetect(paths)
+        project = detected
+        autoDetected = true
 	    }
 	}
 	svc, projName, err := ws.resolve(project)
