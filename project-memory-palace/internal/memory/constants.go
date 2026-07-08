@@ -44,7 +44,7 @@ var RememberRequiredFields = []string{"content", "summary", "title", "type"}
 var UpdateAllowedFields = map[string]bool{
 	"confidence": true, "reason": true, "relations": true,
 	"status": true, "tags": true, "expires_at": true,
-	"source_agent": true, "knowledge_kind": true,
+	"source_agent": true, "knowledge_kind": true, "priority": true,
 }
 
 var KnowledgeKinds = map[string]bool{"fact": true, "interpretation": true, "rule": true}
