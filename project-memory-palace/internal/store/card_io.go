@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/atop/project-memory-palace/internal/memory"
 	"gopkg.in/yaml.v3"
@@ -96,6 +97,19 @@ func ReadCard(path string) (*memory.MemoryCard, error) {
 	}
 
 	return &card, nil
+}
+
+// SaveHistory copies the current YAML card file to the history directory.
+// The old card data is preserved before UpdateMemory overwrites it.
+func SaveHistory(projectRoot string, cardFilename string) error {
+	srcPath := filepath.Join(CardsDir(projectRoot), cardFilename)
+	histDir := filepath.Join(HistoryDir(projectRoot), cardFilename[:len(cardFilename)-len(".yaml")])
+	if err := os.MkdirAll(histDir, 0755); err != nil { return err }
+	ts := time.Now().Format("20060102T150405")
+	dstPath := filepath.Join(histDir, ts+".yaml")
+	src, err := os.ReadFile(srcPath)
+	if err != nil { return err }
+	return os.WriteFile(dstPath, src, 0644)
 }
 
 // DiscoverCards scans the cards directory for *.yaml files, parses and

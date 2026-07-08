@@ -165,6 +165,8 @@ func (s *MemoryService) UpdateMemory(memoryID string, updates map[string]any) (m
 	existing, err := s.OpenMemory(memoryID)
 	if err != nil { return nil, err }
 	if len(updates) == 0 { return existing, nil }
+	// Capture old filename for version history before modifying
+	oldFilename := store.CardFilename(mapToCard(existing))
 	changed := false
 	if status, ok := updates["status"].(string); ok {
 		if !memory.MemoryStatuses[status] { return nil, fmt.Errorf("invalid status: %s", status) }
@@ -226,8 +228,12 @@ func (s *MemoryService) UpdateMemory(memoryID string, updates map[string]any) (m
 	}
 	if !changed { return existing, nil }
 	existing["updated_at"] = now()
-	card := mapToCard(existing)
+card := mapToCard(existing)
 	if err := s.validateRelationTargets(card); err != nil { return nil, err }
+	// Save version history before overwriting
+	if oldFilename != "" {
+		_ = store.SaveHistory(s.projectRoot, oldFilename)
+	}
 	if _, err := store.WriteCard(s.projectRoot, card, true); err != nil { return nil, err }
 	if err := s.idx.Upsert(card); err != nil { return nil, err }
 	return cardToMap(card), nil
