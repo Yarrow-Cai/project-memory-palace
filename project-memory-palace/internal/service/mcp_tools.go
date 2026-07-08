@@ -45,9 +45,10 @@ func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot str
 		recent, _ := svc.ListRecent(5, 0, nil)
 		result["recent"] = recent
 		result["next"] = []string{
-			"1. recall query=<keyword> - search project memory by topic or file path",
-			"2. open_memory id=<id> - get full card details when summary is not enough",
-			"3. remember memory={...} - persist new knowledge after completing work",
+			"1. context_for_files paths=[<current files>] - auto-discover memories linked to files you're working on (no keywords needed!)",
+			"2. recall query=<keyword> - search project memory by topic or file path",
+			"3. open_memory id=<id> - get full card details when summary is not enough",
+			"4. remember memory={...} - persist new knowledge after completing work",
 		}
 		return result, nil
 	}))

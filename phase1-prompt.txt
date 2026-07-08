@@ -1,0 +1,114 @@
+# Task: Phase 1 — Eliminate MCP Tool triple registration in pmem
+
+## Background
+
+The Go project at `C:\Users\Atop\Desktop\pmem\project-memory-palace\project-memory-palace` has the same 9 MCP tool definitions duplicated across 3 locations with inconsistent enums:
+
+- `cmd/pmem/main.go` lines ~300-550: inline `reg.Register(...)` calls inside `cmdServeMCP`
+- `internal/tray/tray.go` lines ~233-491: `registerMCPTools()` function with the SAME tools, different enum values
+- `internal/tray/tray.go` lines ~207-231: `startAPI()` calls `registerMCPTools` for SSE MCP
+
+This is a DRY violation AND a bug — the enum values differ between the two registrations (main.go has 20 memory types, tray.go only has 8).
+
+## Your Job
+
+Eliminate the duplication by creating a SINGLE source of truth and updating all callers.
+
+### Step 1: Add sorted enum helpers to constants
+
+In `internal/memory/constants.go`, add:
+
+```go
+import "sort"
+
+// Sorted slices for stable MCP schema enum generation.
+var MemoryTypeEnum = sortedKeys(MemoryTypes)
+var SourceKindEnum = sortedKeys(SourceKinds)
+var MemoryStatusEnum = sortedKeys(MemoryStatuses)
+
+func sortedKeys(m map[string]bool) []string {
+    keys := make([]string, 0, len(m))
+    for k := range m { keys = append(keys, k) }
+    sort.Strings(keys)
+    return keys
+}
+```
+
+### Step 2: Create internal/service/mcp_tools.go
+
+New file containing one exported function:
+
+```go
+// RegisterAllTools registers all 9 MCP tools onto the given ToolRegistry.
+// This is the SINGLE SOURCE OF TRUTH — used by serve-mcp (stdio), tray SSE MCP, and serve-web.
+func RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot string)
+```
+
+Register these 9 tools: init_project, remember, recall, open_memory, update_memory, delete_memory, list_recent, synthesize_rules, disclosure.
+
+CRITICAL ENUM REQUIREMENTS:
+- `remember` tool: memory.type enum MUST use `memory.MemoryTypeEnum` (20 values)
+- `remember` tool: source.kind enum MUST use `memory.SourceKindEnum` (12 values)
+- All status fields MUST use `memory.MemoryStatusEnum` (5 values)
+
+Use the IMPLEMENTATION from main.go (which has the fuller descriptions and enum values, ~250 lines), NOT tray.go's truncated version. Copy the handler logic from main.go's `cmdServeMCP` function — DO NOT add mutex locks (callers handle their own threading).
+
+For the type/source/status enum fields, generate them from the sorted slices at init time or inline them. The enums MUST match constants.go EXACTLY.
+
+Also add a 10th tool: `check_rules_freshness` — lightweight check whether agent-rules.yaml is stale. It reads the rules file, checks synthesized_at timestamp, and compares against the newest convention/decision card's updated_at. Returns `{rules_stale: bool, last_synthesized_at: string, ...}`.
+
+### Step 3: Refactor cmd/pmem/main.go cmdServeMCP
+
+Delete ALL inline `reg.Register(...)` calls (lines ~300-550, about 250 lines).
+Replace with:
+
+```go
+func cmdServeMCP(args []string) int {
+    if len(args) > 0 { projectRoot = args[0] }
+    svc, err := newService()
+    if err != nil { ... return 1 }
+    if err := svc.InitProject(); err != nil { ... }
+    reg := mcp.NewToolRegistry()
+    service.RegisterAllTools(reg, svc, projectRoot)
+    srv := &mcp.StdioServer{Registry: reg, Reader: os.Stdin, Writer: os.Stdout}
+    defer svc.Close()
+    fmt.Fprintln(os.Stderr, "MCP server started")
+    if err := srv.Serve(); err != nil { ... return 1 }
+    return 0
+}
+```
+
+### Step 4: Refactor internal/tray/tray.go registerMCPTools
+
+Delete the ENTIRE `registerMCPTools` function body (~260 lines). Replace with:
+
+```go
+func registerMCPTools(reg *mcp.ToolRegistry) {
+    service.RegisterAllTools(reg, svc, projectRoot)
+}
+```
+
+Keep the `mu.Lock()/defer mu.Unlock()` wrapping for tray handlers — but move those locks INTO the handler functions that call `registerMCPTools`, NOT inside RegisterAllTools.
+
+### Step 5: Build and verify
+
+```bash
+cd C:\Users\Atop\Desktop\pmem\project-memory-palace\project-memory-palace
+go build -o bin/pmem.exe ./cmd/pmem
+```
+
+Must compile with ZERO errors. Then run go vet:
+```bash
+go vet ./...
+```
+
+## Requirements
+
+- Language: Go (existing code is Go)
+- Do NOT change any existing API signatures (service.Remember, service.Recall, etc.)
+- Do NOT change the MemoryCard struct or YAML file format
+- Do NOT add new third-party dependencies
+- Keep imports clean — only import what's used
+- Use C:\Users\Atop\Desktop\pmem\project-memory-palace\project-memory-palace as working directory
+- After all changes, run `go build` and `go vet` to verify
+- Commit with message: "refactor(service): extract RegisterAllTools, eliminate MCP tool triple registration"

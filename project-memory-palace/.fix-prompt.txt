@@ -1,0 +1,103 @@
+# Project Memory Palace (pmem) — 全量修复工程
+
+## 背景
+
+你正在修复 pmem 项目（当前目录，Go 项目，go build -o bin/pmem.exe ./cmd/pmem）。
+项目结构：cmd/pmem/main.go（CLI + serve-web + serve-mcp），internal/tray/tray.go（托盘 + SSE MCP + REST API），internal/service/service.go（业务逻辑），internal/index/index.go（SQLite FTS5），internal/store/（YAML 文件存取）。
+
+你需要按以下 7 个 Phase 逐一修复，不要偷懒跳过。每个 Phase 修复后先 go build 验证编译通过再继续下一个。全部完成后跑 go vet ./... 和 go build。
+
+---
+
+## Phase 1: 消除 MCP Tool 注册的三重重复（P0）
+
+1. 创建 `internal/service/mcp_tools.go`，包含导出函数 `RegisterAllTools(reg *mcp.ToolRegistry, svc *MemoryService, projectRoot string)`。这个函数注册全部 9 个 MCP tool（init_project, remember, recall, open_memory, update_memory, delete_memory, list_recent, synthesize_rules, disclosure, check_rules_freshness）。参考 `cmd/pmem/main.go` 的 cmdServeMCP 和 `internal/tray/tray.go` 的 registerMCPTools 的现有实现。
+
+2. 统一 enum：所有 tool schema 中的 enum 必须从 `internal/memory/constants.go` 的 MemoryTypes/SourceKinds/MemoryStatuses map 自动生成，不能用硬编码字符串数组。在 constants.go 加 sortedKeys 辅助函数保证稳定排序（需要 import "sort"）。
+
+3. 修改调用方：
+   - `cmd/pmem/main.go` 的 cmdServeMCP：删掉内联的 tool 注册代码（~250行），改为调用 RegisterAllTools
+   - `internal/tray/tray.go` 的 registerMCPTools：同上，删掉重复代码（~250行），改为调用 RegisterAllTools
+   - tray.go 里 handler 用 mu.Lock() 包裹的锁逻辑留在 tray.go 调用层，不进 RegisterAllTools
+
+4. 验证：go build 通过，且 `grep -c "reg.Register" internal/service/mcp_tools.go` 应为 10（9个tool + 1个 check_rules_freshness），main.go 和 tray.go 中不应再有 MCP tool 的 reg.Register 调用。
+
+---
+
+## Phase 2: 修复 OpenMemory 的 O(n) 全量 YAML 扫描（P0）
+
+1. 在 `internal/index/index.go` 添加方法 `GetMemory(id string) (map[string]any, error)`，从 SQLite memories 表按 id 查卡片，返回结构化字段（不含 content），返回 nil 表示不存在。
+
+2. 修改 `internal/service/service.go` 的 OpenMemory：先调 s.idx.GetMemory(id) 确认存在，然后用 CardFilename() 推导 YAML 路径，只读单个 YAML 文件。不再扫整个 cards 目录。
+
+3. 验证：go build 通过。
+
+---
+
+## Phase 3: synthesizeRules 改为按需调用（P1）
+
+1. 在 service.go 的 Remember 方法中，删除 `_, _ = s.SynthesizeRules()` 这行（大约第53行）。
+
+2. 在 disclosure MCP tool 中添加 rules_stale 检测逻辑（如果存在 check_rules_freshness tool 则已有此逻辑）。
+
+3. 验证：go build 通过。
+
+---
+
+## Phase 4: 实现过期机制的执行层（P1）
+
+1. 修改 index.go 的 Search 和 Recent 方法：WHERE 子句加 `AND (m.expires_at = '' OR m.expires_at > datetime('now'))` 排除已过期卡片。
+
+2. 在 index.go 的 Initialize 中（每次启动时），执行 UPDATE 将 expires_at 已过的 active 卡片状态改为 expired。
+
+3. 验证：go build 通过。
+
+---
+
+## Phase 5: 双写一致性 + 代码去重（P1-P2）
+
+1. 创建 `internal/service/utils.go`，把 parseIntParam 等重复函数移入。
+
+2. 修复 disclose 中 `updated_at > since` 的字符串比较：改用 time.Parse 做真正的时间比较。
+
+3. 统一 JSON 写入函数命名（main.go 的 writeWebJSONList vs tray.go 的 writeJSONList）。
+
+4. 验证：go build 通过。
+
+---
+
+## Phase 6: 关系系统增强（P2）
+
+1. 在 Remember 中，当 payload 包含 relations 时，验证每个 target_id 对应的卡片是否存在（调用 idx.GetMemory）。不存在的返回 warning 而非 error。
+
+2. 在 DeleteMemory 中，删除前查询 relations 找出所有引用被删卡片的条目，在返回结果中包含 affected_cards 列表。
+
+3. 验证：go build 通过。
+
+---
+
+## Phase 7: 移除 Windows 硬编码（P2）
+
+1. hideConsole() 用 Go build tags：Windows 用 FreeConsole，其他平台用 noop。
+
+2. 浏览器打开命令：tray.go 的 onReady 中，根据 runtime.GOOS 选择 cmd /c start / xdg-open / open。
+
+3. 验证：go build 通过。
+
+---
+
+## 最终验证
+
+```bash
+go build -o bin/pmem.exe ./cmd/pmem
+go vet ./...
+go build ./...    # 确保所有子包编译通过
+```
+
+## 约束
+
+- 不要改动 YAML 文件格式或 MemoryCard 结构体
+- 不要改动 Web UI 的 HTML 结构
+- 不要引入新的第三方依赖
+- 不要删除现有的 CLI 命令
+- 每个 Phase 修完后先 go build 确认编译通过再继续
