@@ -39,7 +39,6 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		// Optional workspace switch
 		if path, ok := params["workspace"].(string); ok && path != "" {
 			if err := ws.SetWorkspace(path, ""); err != nil { return nil, err }
-			store.SaveConfig(&store.PMemConfig{Workspace: path})
 		}
 		projects, err := ws.ListProjects()
 		if err != nil { return nil, err }
@@ -91,8 +90,7 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		svc, projName, err := ws.resolve(extractProject(params))
 		if err != nil { return nil, err }
 		// Auto-set as default project + persist
-		ws.SetDefaultProject(projName)
-		store.SaveConfig(&store.PMemConfig{Workspace: ws.workspaceDir, DefaultProject: projName})
+		store.SetDefaultProject(ws.workspaceDir, projName)
 		if err := svc.InitProject(); err != nil {
 			return nil, err
 		}

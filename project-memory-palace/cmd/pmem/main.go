@@ -271,13 +271,7 @@ func cmdSynthesizeRules(args []string) int {
 }
 
 func cmdServeMCP(args []string) int {
-	if len(args) > 0 {
-		projectRoot = args[0]
-		store.SaveConfig(&store.PMemConfig{Workspace: projectRoot})
-	} else {
-		cfg, _ := store.LoadConfig()
-		if cfg != nil && cfg.Workspace != "" { projectRoot = cfg.Workspace }
-	}
+	if len(args) > 0 { projectRoot = args[0] }
 
 	var ws *service.WorkspaceService
 	var err error
@@ -334,13 +328,7 @@ func cmdExport(args []string) int {
 }
 
 func cmdServeWeb(args []string) int {
-	if len(args) > 0 {
-		projectRoot = args[0]
-		store.SaveConfig(&store.PMemConfig{Workspace: projectRoot})
-	} else {
-		cfg, _ := store.LoadConfig()
-		if cfg != nil && cfg.Workspace != "" { projectRoot = cfg.Workspace }
-	}
+	if len(args) > 0 { projectRoot = args[0] }
 
 	var ws *service.WorkspaceService
 	var wsErr error
@@ -538,7 +526,6 @@ http.HandleFunc("/api/project", func(w http.ResponseWriter, r *http.Request) {
 			ws, _ = service.NewSingleProject(newRoot)
 		}
 		tray.AddRecent(newRoot)
-		store.SaveConfig(&store.PMemConfig{Workspace: newRoot})
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"root": projectRoot, "recents": tray.RecentList()})
 	})

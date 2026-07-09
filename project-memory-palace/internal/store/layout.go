@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-const defaultConfigYAML = "# Project Memory Palace Configuration\nschema_version: 1\nproject: \"\"\ncreated_at: \"\"\n"
+const defaultConfigYAML = "# Project Memory Palace Configuration\nschema_version: 2\nproject: \"\"\ndescription: \"\"\ncreated_at: \"\"\nworkspace_path: \"\"\ndefault: false\nmodules: []\n"
 
 const defaultRulesYAML = "# Agent Rules - synthesized from memory cards\nversion: 1\nrules: []\n"
 
