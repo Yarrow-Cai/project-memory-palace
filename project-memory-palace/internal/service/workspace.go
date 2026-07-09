@@ -395,6 +395,15 @@ func (ws *WorkspaceService) SetWorkspace(path string, defaultProj string) error 
 		}
 	}
 	if len(newProjects) == 0 {
+		// Fallback: check if path itself is a project with .project-memory/
+		projMemoryDir := filepath.Join(path, ".project-memory")
+		if info, err := os.Stat(projMemoryDir); err == nil && info.IsDir() {
+			dirName := filepath.Base(path)
+			newProjects[dirName] = New(path)
+			firstProj = dirName
+		}
+	}
+	if len(newProjects) == 0 {
 		return fmt.Errorf("set workspace: no projects found in %s", path)
 	}
 	ws.workspaceDir = path
