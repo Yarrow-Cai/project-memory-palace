@@ -255,3 +255,49 @@ func splitWords(s string) []string {
 	}
 	return result
 }
+// DuplicateWarning represents a potential duplicate card warning.
+type DuplicateWarning struct {
+	Type         string  `json:"type"`
+	SimilarID    string  `json:"similar_id"`
+	SimilarTitle string  `json:"similar_title"`
+	Score        float64 `json:"score"`
+}
+
+// checkDuplicates searches for similar cards and returns duplicate warnings.
+// excludeID is the card to exclude from results (the card just created).
+func checkDuplicates(svc *MemoryService, title string, threshold float64, excludeID string) []DuplicateWarning {
+	results, err := svc.Recall(title, nil, 10)
+	if err != nil {
+		return nil
+	}
+	var warnings []DuplicateWarning
+	titleLower := strings.ToLower(strings.TrimSpace(title))
+	for _, r := range results {
+		id, _ := r["id"].(string)
+		if id == excludeID {
+			continue
+		}
+		rt, _ := r["title"].(string)
+		score := computeSimilarity(titleLower, strings.ToLower(strings.TrimSpace(rt)))
+		if score >= threshold {
+			warnings = append(warnings, DuplicateWarning{
+				Type:         "possible_duplicate",
+				SimilarID:    id,
+				SimilarTitle: rt,
+				Score:        score,
+			})
+		}
+	}
+	return warnings
+}
+
+// computeSimilarity returns a similarity score between two lowercase strings.
+func computeSimilarity(a, b string) float64 {
+	if a == b {
+		return 1.0
+	}
+	if shareSignificantWords(a, b) >= 2 {
+		return 0.7
+	}
+	return 0.4
+}

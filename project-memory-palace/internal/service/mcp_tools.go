@@ -1,14 +1,12 @@
-﻿package service
+package service
 
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/atop/project-memory-palace/internal/audit"
 	"github.com/atop/project-memory-palace/internal/mcp"
-	"github.com/atop/project-memory-palace/internal/memory"
 	"github.com/atop/project-memory-palace/internal/store"
 	"gopkg.in/yaml.v3"
 )
@@ -24,12 +22,9 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		return h
 	}
 
-	typeEnum := memory.SortedKeys(memory.MemoryTypes)
-	statusEnum := memory.SortedKeys(memory.MemoryStatuses)
-	sourceKindEnum := memory.SortedKeys(memory.SourceKinds)
-	projectProp := map[string]any{
+				projectProp := map[string]any{
 		"type":        "string",
-		"description": "目标工程名称。不填则使用默认工程（第一个发现的工程）。可用 list_projects 查看所有可用工程。",
+		"description": "目标工程名称。留空则使用默认工程。",
 	}
 
 	// 0. init_workspace
@@ -60,22 +55,31 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 			"next": []string{
 				"1. init_project project=<name> - 初始化并获取指定工程的 rules + recent",
 				"2. context_for_files paths=[...] - 根据文件自动关联工程记忆",
-				"3. recall_all query=<keyword> - 跨所有工程搜索",
+				"3. recall query=<keyword> - 跨所有工程搜索（不传 project 参数）",
 			},
 		}, nil
 	}))
 
 	// 1. init_project
-	reg.Register("init_project", "初始化指定工程。返回该工程的 rules、recent activities 和 next-step guide。应先调用 init_workspace 了解可用工程，再用本工具初始化目标工程。", map[string]any{"type": "object", "properties": map[string]any{
+	reg.Register("init_project", "初始化指定工程。返回该工程的 rules、recent activities、可选 disclosure 和 next-step guide。应先调用 init_workspace 了解可用工程，再用本工具初始化目标工程。", map[string]any{"type": "object", "properties": map[string]any{
 		"project": projectProp,
 		"since": map[string]any{
 			"type":        "string",
 			"description": "ISO timestamp — returns changes since this time (e.g. 2026-07-09T00:00:00Z)",
 		},
+		"disclosure_mode": map[string]any{
+			"type":        "string",
+			"description": "可选: 渐进披露模式 — 'first'（高优先级全貌）或 'subsequent'（核心+近期变更）",
+			"enum":        []string{"first", "subsequent"},
+		},
+		"disclosure_since": map[string]any{
+			"type":        "string",
+			"description": "ISO timestamp — disclosure 变更时间起点（subsequent 模式用）",
+		},
 	},
 	}, wrap(func(params map[string]any) (any, error) {
-	svc, _, err := ws.resolve(extractProject(params))
-	if err != nil { return nil, err }
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil { return nil, err }
 		if err := svc.InitProject(); err != nil {
 			return nil, err
 		}
@@ -97,6 +101,17 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 			result["changes_since"] = since
 			result["change_count"] = len(changedCards)
 		}
+		// Disclosure merge: if disclosure_mode is set, call Disclosure() and include in response
+		if mode, ok := params["disclosure_mode"].(string); ok && mode != "" {
+			since, _ := params["disclosure_since"].(string)
+			cards, err := svc.Disclosure(mode, since)
+			if err == nil {
+				result["disclosure"] = map[string]any{
+					"cards": cards,
+					"mode":  mode,
+				}
+			}
+		}
 		result["next"] = []string{
 			"1. context_for_files paths=[<current files>] - auto-discover memories linked to files you're working on (no keywords needed!)",
 			"2. recall query=<keyword> - search project memory by topic or file path",
@@ -107,144 +122,84 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 	}))
 
 	// 2. remember
-	reg.Register("remember", "Write one durable project memory card. Required: type, title, summary, content. Include source to achieve confidence > 0.5.", map[string]any{
+	reg.Register("remember", "写入一张或多张持久化记忆卡片。必填: type, title, summary, content。传入单个 object 创建一张，或传入 array 批量创建。提供 source 可获得 >0.5 置信度。写入后自动检测重复并返回 warnings。", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"project": projectProp,
 			"memory": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"type": map[string]any{
-						"type":        "string",
-				"description": "Memory type",
-				"enum":        typeEnum,
-			},
-			"source_agent": map[string]any{
-				"type":        "string",
-				"description": "创建此记忆的 AI agent 标识 (如 claude-code, codex-cli, hermes-agent)",
-			},
-			"knowledge_kind": map[string]any{
-				"type":        "string",
-				"description": "知识类型: fact(事实/不会过时), interpretation(解释/可能过时), rule(规则/应遵循)",
-				"enum":        []string{"fact", "interpretation", "rule"},
-			},
-			"title": map[string]any{
-						"type":        "string",
-						"description": "Memory title — concise and descriptive",
-					},
-					"summary": map[string]any{
-						"type":        "string",
-						"description": "One-sentence summary for search results",
-					},
-					"content": map[string]any{
-						"type":        "string",
-						"description": "Full content — explain the decision, convention, or finding in detail",
-					},
-					"confidence": map[string]any{
-						"type":        "number",
-						"description": "Confidence 0.0-1.0. NOTE: capped at 0.5 unless source is provided (default: 0.5)",
-						"minimum":     float64(0),
-						"maximum":     float64(1),
-					},
-					"status": map[string]any{
-						"type":        "string",
-						"description": "Memory status (default: active)",
-						"enum":        statusEnum,
-					},
-					"tags": map[string]any{
-						"type":        "array",
-						"items":       map[string]any{"type": "string"},
-						"description": "Categorization tags",
-					},
-					"source": map[string]any{
-						"type":        "object",
-						"description": "Source information. REQUIRED for confidence > 0.5.",
-						"properties": map[string]any{
-							"kind": map[string]any{
-								"type":        "string",
-								"description": "Source kind",
-								"enum":        sourceKindEnum,
-							},
-							"description": map[string]any{
-								"type":        "string",
-								"description": "Human-readable source description",
-							},
-							"files": map[string]any{
-								"type":  "array",
-								"items": map[string]any{"type": "string"},
-							},
-							"commits": map[string]any{
-								"type":  "array",
-								"items": map[string]any{"type": "string"},
-							},
-						},
-						"required": []string{"kind", "description"},
-					},
-					"scope": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"project": map[string]any{"type": "string"},
-							"modules": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-							"paths":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-						},
-					},
-					"relations": map[string]any{
-						"type":        "object",
-						"description": "Relations to other memories, e.g. {\"supersedes\": [\"mem_20260101_001\"]}",
-					},
-					"template": map[string]any{
-						"type":        "string",
-						"description": "可选模板名称，来自 .project-memory/templates/<name>.yaml。模板字段填充缺失值，显式提供的字段优先级更高。",
-					},
-				},
-				"required": []string{"type", "title", "summary", "content"},
+				"type":        "object",
+				"description": "单张记忆卡片（object）或批量数组（array of objects）。数组模式返回 results 列表。",
 			},
 		},
 		"required": []string{"memory"},
 	}, wrap(func(params map[string]any) (any, error) {
-	svc, _, err := ws.resolve(extractProject(params))
-	if err != nil { return nil, err }
-		mem, ok := params["memory"].(map[string]any)
+		raw, ok := params["memory"]
 		if !ok {
 			return nil, fmt.Errorf("memory parameter required")
 		}
-		result, err := svc.Remember(mem)
-		if err != nil { return nil, err }
-		// Dedup hint: check for similar cards after creation
-		title, _ := mem["title"].(string)
-		if title != "" {
-			similar, _ := svc.Recall(title, nil, 3)
-			cardID, _ := result["id"].(string)
-			var filtered []map[string]any
-			for _, s := range similar {
-				if s["id"] != cardID {
-					filtered = append(filtered, map[string]any{
-						"id":    s["id"],
-						"title": s["title"],
-						"type":  s["type"],
-					})
+		switch mem := raw.(type) {
+		case map[string]any:
+			// Single card
+			svc, _, err := ws.resolve(extractProject(params))
+			if err != nil { return nil, err }
+			result, err := svc.Remember(mem)
+			if err != nil { return nil, err }
+			// Built-in duplicate check
+			if title, _ := mem["title"].(string); title != "" {
+				cardID, _ := result["id"].(string)
+				warnings := checkDuplicates(svc, title, 0.3, cardID)
+				if len(warnings) > 0 {
+					result["warnings"] = warnings
 				}
 			}
-			if len(filtered) > 0 {
-				result["dedup_hint"] = "Similar cards exist"
-				result["similar"] = filtered
+			return result, nil
+		case []any:
+			// Batch
+			if len(mem) == 0 {
+				return nil, fmt.Errorf("memory array must not be empty")
 			}
+			svc, _, err := ws.resolve(extractProject(params))
+			if err != nil { return nil, err }
+			var results []map[string]any
+			for i, m := range mem {
+				payload, ok := m.(map[string]any)
+				if !ok {
+					results = append(results, map[string]any{"index": i, "error": "invalid memory object, expected object"})
+					continue
+				}
+				result, err := svc.Remember(payload)
+				if err != nil {
+					results = append(results, map[string]any{"index": i, "error": err.Error()})
+					continue
+				}
+				// Built-in duplicate check
+				if title, _ := payload["title"].(string); title != "" {
+					cardID, _ := result["id"].(string)
+					warnings := checkDuplicates(svc, title, 0.3, cardID)
+					if len(warnings) > 0 {
+						result["warnings"] = warnings
+					}
+				}
+				results = append(results, result)
+			}
+			return map[string]any{"results": results, "total": len(mem), "success": len(results)}, nil
+		default:
+			return nil, fmt.Errorf("memory must be an object or array of objects")
 		}
-		return result, nil
 	}))
 
 	// 3. recall
-	reg.Register("recall", "Search memories (Level 2 disclosure). Returns short summaries only. Filter by paths to get file-specific context. Need details? Use open_memory.", map[string]any{
+	reg.Register("recall", "搜索记忆（Level 2 披露）。返回简短摘要。不传 project 则跨所有工程搜索。传入 paths 过滤可获取文件特定上下文。需要详情？用 open_memory。", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"project": projectProp,
 			"query": map[string]any{
 				"type":        "string",
-				"description": "Search keyword or phrase. Supports both English and Chinese. Use concise terms for best results (e.g. 'PWM', '中断', '逆变器').",
+				"description": "搜索关键词或短语。支持中英文。用简洁术语获得最佳结果。",
 			},
 			"filters": map[string]any{
 				"type":        "object",
-				"description": "Optional filters: status (string), paths (string or array of strings to filter by file path).",
+				"description": "可选过滤: status (string), paths (string 或 string array, 按文件路径过滤)。",
 				"properties": map[string]any{
 					"status": map[string]any{"type": "string", "description": "Filter by memory status."},
 					"paths":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter by file paths associated with the memory."},
@@ -252,9 +207,8 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 			},
 			"limit": map[string]any{"type": "integer"},
 		},
+		"required": []string{"query"},
 	}, wrap(func(params map[string]any) (any, error) {
-	svc, _, err := ws.resolve(extractProject(params))
-	if err != nil { return nil, err }
 		query := ""
 		if v, ok := params["query"].(string); ok {
 			query = v
@@ -264,28 +218,74 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		if v, ok := params["limit"].(float64); ok {
 			limit = int(v)
 		}
-		results, err := svc.Recall(query, filters, limit)
-		if err != nil {
-			return nil, err
+
+		project := extractProject(params)
+		var results []map[string]any
+		if project == "" {
+			// Cross-project search
+			r, err := ws.RecallAll(query, filters, limit)
+			if err != nil { return nil, err }
+			results = r
+		} else {
+			svc, _, err := ws.resolve(project)
+			if err != nil { return nil, err }
+			r, err := svc.Recall(query, filters, limit)
+			if err != nil { return nil, err }
+			results = r
 		}
 		return map[string]any{"results": results}, nil
 	}))
 
 	// 4. open_memory
-	reg.Register("open_memory", "Level 3 disclosure: Get full card content by ID. Only call after recall returns a summary you need more detail on.", map[string]any{
+	reg.Register("open_memory", "Level 3 披露: 按 ID 获取完整卡片内容。传入单条 ID 字符串或 ID 数组批量获取。仅在 recall 返回摘要后需要详情时调用。", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"project": projectProp,
-			"id": map[string]any{"type": "string"},
+			"id": map[string]any{
+				"type":        "string",
+				"description": "卡片 ID（如 'mem_20260101_001'）或 ID 数组",
+			},
 		},
 	}, wrap(func(params map[string]any) (any, error) {
-	svc, _, err := ws.resolve(extractProject(params))
-	if err != nil { return nil, err }
-		id := ""
-		if v, ok := params["id"].(string); ok {
-			id = v
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil { return nil, err }
+
+		switch id := params["id"].(type) {
+		case string:
+			// Single card
+			if id == "" {
+				return nil, fmt.Errorf("id parameter required")
+			}
+			return svc.OpenMemory(id)
+		case []any:
+			// Batch
+			ids := toStringSlice(params["id"])
+			if len(ids) == 0 {
+				return nil, fmt.Errorf("id array must not be empty")
+			}
+			var results []map[string]any
+			for _, memID := range ids {
+				card, err := svc.OpenMemory(memID)
+				if err != nil {
+					results = append(results, map[string]any{"id": memID, "error": err.Error()})
+				} else {
+					results = append(results, card)
+				}
+			}
+			// Record access for batch
+			var accessedIDs []string
+			for _, r := range results {
+				if rid, ok := r["id"].(string); ok && rid != "" {
+					accessedIDs = append(accessedIDs, rid)
+				}
+			}
+			if len(accessedIDs) > 0 {
+				_ = svc.idx.RecordAccess(accessedIDs)
+			}
+			return map[string]any{"results": results}, nil
+		default:
+			return nil, fmt.Errorf("id must be a string or array of strings")
 		}
-		return svc.OpenMemory(id)
 	}))
 
 	// 5. update_memory
@@ -301,16 +301,12 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		},
 		"required": []string{"id", "updates"},
 	}, wrap(func(params map[string]any) (any, error) {
-	svc, _, err := ws.resolve(extractProject(params))
-	if err != nil { return nil, err }
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil { return nil, err }
 		id := ""
-		if v, ok := params["id"].(string); ok {
-			id = v
-		}
+		if v, ok := params["id"].(string); ok { id = v }
 		updates, ok := params["updates"].(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("updates parameter required")
-		}
+		if !ok { return nil, fmt.Errorf("updates parameter required") }
 		return svc.UpdateMemory(id, updates)
 	}))
 
@@ -323,15 +319,11 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		},
 		"required": []string{"id"},
 	}, wrap(func(params map[string]any) (any, error) {
-	svc, _, err := ws.resolve(extractProject(params))
-	if err != nil { return nil, err }
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil { return nil, err }
 		id := ""
-		if v, ok := params["id"].(string); ok {
-			id = v
-		}
-		if id == "" {
-			return nil, fmt.Errorf("id parameter required")
-		}
+		if v, ok := params["id"].(string); ok { id = v }
+		if id == "" { return nil, fmt.Errorf("id parameter required") }
 		return svc.DeleteMemory(id)
 	}))
 
@@ -343,131 +335,76 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 			"limit": map[string]any{"type": "integer"},
 		},
 	}, wrap(func(params map[string]any) (any, error) {
-	svc, _, err := ws.resolve(extractProject(params))
-	if err != nil { return nil, err }
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil { return nil, err }
 		limit := 10
-		if v, ok := params["limit"].(float64); ok {
-			limit = int(v)
-		}
+		if v, ok := params["limit"].(float64); ok { limit = int(v) }
 		results, err := svc.ListRecent(limit, 0, nil)
-		if err != nil {
-			return nil, err
-		}
+		if err != nil { return nil, err }
 		return map[string]any{"results": results}, nil
 	}))
 
 	// 8. synthesize_rules
 	reg.Register("synthesize_rules", "Regenerate agent-rules.yaml from active convention and decision cards. Returns the full rules document. NOTE: init_project already returns the latest rules — use this only when you have written new memories and need fresh rules.", map[string]any{
-		"type": "object", "properties": map[string]any{
-			"project": projectProp,
-		},
+		"type": "object", "properties": map[string]any{"project": projectProp},
 	}, wrap(func(params map[string]any) (any, error) {
-	svc, _, err := ws.resolve(extractProject(params))
-	if err != nil { return nil, err }
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil { return nil, err }
 		doc, err := svc.SynthesizeRules()
-		if err != nil {
-			return nil, err
-		}
+		if err != nil { return nil, err }
 		rules := make([]map[string]any, len(doc.Rules))
 		for i, r := range doc.Rules {
 			rules[i] = map[string]any{
-				"id":            r.ID,
-				"source_memory": r.SourceMemory,
-				"title":         r.Title,
-				"category":      r.Category,
-				"body":          r.Body,
-				"created_at":    r.CreatedAt,
+				"id": r.ID, "source_memory": r.SourceMemory,
+				"title": r.Title, "category": r.Category,
+				"body": r.Body, "created_at": r.CreatedAt,
 			}
 		}
 		return map[string]any{
-			"version":        doc.Version,
-			"synthesized_at": doc.SynthesizedAt,
-			"rule_count":     len(doc.Rules),
-			"rules":          rules,
+			"version": doc.Version, "synthesized_at": doc.SynthesizedAt,
+			"rule_count": len(doc.Rules), "rules": rules,
 		}, nil
 	}))
 
-	// 9. disclosure
-	reg.Register("disclosure", "渐进披露项目记忆。first模式返回高优先级(>=3)全貌；subsequent模式返回核心(>=5)+近期变更。减少上下文占用。", map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"project": projectProp,
-			"mode": map[string]any{
-				"type":        "string",
-				"description": "Disclosure mode: 'first' or 'subsequent'",
-				"enum":        []string{"first", "subsequent"},
-			},
-			"since": map[string]any{
-				"type":        "string",
-				"description": "ISO timestamp (required for subsequent mode)",
-			},
-		},
-		"required": []string{"mode"},
-	}, wrap(func(params map[string]any) (any, error) {
-	svc, _, err := ws.resolve(extractProject(params))
-	if err != nil { return nil, err }
-	mode, _ := params["mode"].(string)
-	since, _ := params["since"].(string)
-	results, err := svc.Disclosure(mode, since)
-	if err != nil { return nil, err }
-	return map[string]any{"mode": mode, "results": results}, nil
-	}))
-
-	// 10. check_rules_freshness
+	// 9. check_rules_freshness
 	reg.Register("check_rules_freshness", "Check if the synthesized rules are stale (i.e., newer convention/decision cards exist that have not been reflected in agent-rules.yaml). Returns stale status and the count of newer cards.", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"project": projectProp,
 			"since": map[string]any{
-				"type":        "string",
+				"type": "string",
 				"description": "Optional: ISO timestamp to check freshness against. If omitted, uses the rules file synthesized_at timestamp.",
 			},
 		},
 	}, wrap(func(params map[string]any) (any, error) {
-	svc, _, err := ws.resolve(extractProject(params))
-	if err != nil { return nil, err }
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil { return nil, err }
 		since, _ := params["since"].(string)
 		if since == "" {
-			// Try to read synthesized_at from rules file
 			data, err := os.ReadFile(store.RulesPath(svc.ProjectRoot()))
-			if err != nil {
-				return map[string]any{"stale": true, "error": "no rules file found"}, nil
-			}
-			var doc struct {
-				SynthesizedAt string `yaml:"synthesized_at"`
-			}
+			if err != nil { return map[string]any{"stale": true, "error": "no rules file found"}, nil }
+			var doc struct { SynthesizedAt string `yaml:"synthesized_at"` }
 			if yaml.Unmarshal(data, &doc) != nil || doc.SynthesizedAt == "" {
 				return map[string]any{"stale": true, "error": "could not parse synthesized_at"}, nil
 			}
 			since = doc.SynthesizedAt
 		}
-		// List recent memories and check for convention/decision cards newer than since
 		recent, err := svc.ListRecent(50, 0, map[string]any{"status": "active"})
-		if err != nil {
-			return nil, err
-		}
+		if err != nil { return nil, err }
 		var newCards []map[string]any
 		for _, c := range recent {
 			tp, _ := c["type"].(string)
-			if tp != "convention" && tp != "decision" {
-				continue
-			}
+			if tp != "convention" && tp != "decision" { continue }
 			upd, _ := c["updated_at"].(string)
 			if IsAfterTime(upd, since) {
-				newCards = append(newCards, map[string]any{
-					"id":    c["id"],
-					"type":  tp,
-					"title": c["title"],
-				})
+				newCards = append(newCards, map[string]any{"id": c["id"], "type": tp, "title": c["title"]})
 			}
 		}
 		stale := len(newCards) > 0
 		result := map[string]any{
-			"stale":         stale,
-			"rules_age":     since,
-			"checked_at":    time.Now().Format(time.RFC3339),
-			"newer_cards":   newCards,
-			"newer_count":   len(newCards),
+			"stale": stale, "rules_age": since,
+			"checked_at": time.Now().Format(time.RFC3339),
+			"newer_cards": newCards, "newer_count": len(newCards),
 		}
 		if stale {
 			result["message"] = "Rules are stale; call synthesize_rules to regenerate"
@@ -476,37 +413,34 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		}
 		return result, nil
 	}))
-	// 11. context_for_files
+
+	// 10. context_for_files
 	reg.Register("context_for_files", "获取与指定文件关联的活跃记忆。传入当前编辑的文件路径，系统自动返回相关 conventions/decisions/已知问题。", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"project": projectProp,
 			"paths": map[string]any{
-				"type":        "array",
-				"items":       map[string]any{"type": "string"},
+				"type": "array", "items": map[string]any{"type": "string"},
 				"description": "文件路径列表",
 			},
-			"limit": map[string]any{
-				"type":        "integer",
-				"description": "返回结果数量上限",
-			},
+			"limit": map[string]any{"type": "integer", "description": "返回结果数量上限"},
 		},
 		"required": []string{"paths"},
 	}, wrap(func(params map[string]any) (any, error) {
-	project := extractProject(params)
-	autoDetected := false
-	if project == "" {
-	    rawPaths, ok := params["paths"].([]any)
-	    if ok && len(rawPaths) > 0 {
-	        paths := make([]string, len(rawPaths))
-	        for ip, p := range rawPaths { paths[ip] = fmt.Sprint(p) }
-        detected := ws.AutoDetect(paths)
-        project = detected
-        autoDetected = true
-	    }
-	}
-	svc, projName, err := ws.resolve(project)
-	if err != nil { return nil, err }
+		project := extractProject(params)
+		autoDetected := false
+		if project == "" {
+			rawPaths, ok := params["paths"].([]any)
+			if ok && len(rawPaths) > 0 {
+				paths := make([]string, len(rawPaths))
+				for ip, p := range rawPaths { paths[ip] = fmt.Sprint(p) }
+				detected := ws.AutoDetect(paths)
+				project = detected
+				autoDetected = true
+			}
+		}
+		svc, projName, err := ws.resolve(project)
+		if err != nil { return nil, err }
 		paths := toStringSlice(params["paths"])
 		if len(paths) == 0 { return map[string]any{"results": []map[string]any{}, "matched_files": 0}, nil }
 		limit := 20
@@ -520,257 +454,64 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		}
 		return result, nil
 	}))
-	// 12. list_projects
-	reg.Register("list_projects", "列出当前工作区所有可用工程及其卡片数量。Agent 应在会话开始时调用此工具了解可用工程，然后在其他工具中使用 project 参数指定目标工程。", map[string]any{
-		"type": "object", "properties": map[string]any{},
-	}, wrap(func(params map[string]any) (any, error) {
-		projects, err := ws.ListProjects()
-		if err != nil { return nil, err }
-		return map[string]any{
-			"workspace": ws.workspaceDir,
-			"projects":  projects,
-			"count":     len(projects),
-		}, nil
-	}))
 
-	// 13. recall_all
-	reg.Register("recall_all", "跨所有工程搜索记忆。当你不知道某个知识点在哪个工程中时使用。结果中每条卡片带 project 字段标明来源工程。", map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"query": map[string]any{"type": "string", "description": "搜索关键词"},
-			"filters": map[string]any{
-				"type": "object",
-				"description": "可选过滤: status (string), paths (string array)",
-				"properties": map[string]any{
-					"status": map[string]any{"type": "string"},
-					"paths":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				},
-			},
-			"limit": map[string]any{"type": "integer", "description": "最大返回数量 (默认 10)"},
-		},
-		"required": []string{"query"},
-	}, wrap(func(params map[string]any) (any, error) {
-		query, _ := params["query"].(string)
-		filters, _ := params["filters"].(map[string]any)
-		limit := 10
-		if v, ok := params["limit"].(float64); ok { limit = int(v) }
-		results, err := ws.RecallAll(query, filters, limit)
-		if err != nil { return nil, err }
-	return map[string]any{"results": results, "searched_projects": len(ws.projects)}, nil
-	}))
-
-	// 14. audit_project
+	// 11. audit_project
 	reg.Register("audit_project", "审计指定工程的所有记忆卡片，检测低置信度、缺失标签/范围、高置信度推理、疑似重复、过期卡片、多Agent冲突等问题。", map[string]any{
 		"type": "object",
-		"properties": map[string]any{
-			"project": projectProp,
-		},
+		"properties": map[string]any{"project": projectProp},
 	}, wrap(func(params map[string]any) (any, error) {
 		svc, _, err := ws.resolve(extractProject(params))
-		if err != nil {
-			return nil, err
-		}
+		if err != nil { return nil, err }
 		report, err := audit.AuditProject(svc.ProjectRoot())
-		if err != nil {
-			return nil, err
-		}
+		if err != nil { return nil, err }
 		return map[string]any{
-			"issues":      report,
-			"issue_count": len(report),
-			"project":     svc.ProjectRoot(),
+			"issues": report, "issue_count": len(report), "project": svc.ProjectRoot(),
 		}, nil
 	}))
 
-	// 15. vacuum
+	// 12. vacuum
 	reg.Register("vacuum", "压缩数据库，回收磁盘空间。建议定期调用以保持数据库性能。", map[string]any{
 		"type": "object",
-		"properties": map[string]any{
-			"project": projectProp,
-		},
+		"properties": map[string]any{"project": projectProp},
 	}, wrap(func(params map[string]any) (any, error) {
 		svc, _, err := ws.resolve(extractProject(params))
-		if err != nil {
-			return nil, err
-		}
-		if err := svc.Vacuum(); err != nil {
-			return nil, err
-		}
-		return map[string]any{
-			"status":  "ok",
-			"message": "database vacuumed successfully",
-		}, nil
+		if err != nil { return nil, err }
+		if err := svc.Vacuum(); err != nil { return nil, err }
+		return map[string]any{"status": "ok", "message": "database vacuumed successfully"}, nil
 	}))
 
-	// 16. refresh_workspace
-	// 16. refresh_workspace
-	reg.Register("refresh_workspace", "刷新工作区，扫描新添加的工程。添加新工程后无需重启服务。", map[string]any{"type": "object", "properties": map[string]any{},
-	}, wrap(func(params map[string]any) (any, error) {
-		added := ws.RefreshWorkspace()
-		return map[string]any{
-			"added":          added,
-			"total_projects": len(ws.ProjectNames()),
-		}, nil
-	}))
-
-	// 17. get_relations
+	// 13. get_relations
 	reg.Register("get_relations", "获取卡片的关系图。返回出向关系、入向引用、卡片标题，支持多层级图遍历（最多3层）。", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"id": map[string]any{
-				"type":        "string",
-				"description": "卡片 ID（如 'mem_20260101_001'）",
-			},
+			"id": map[string]any{"type": "string", "description": "卡片 ID（如 'mem_20260101_001'）"},
 			"direction": map[string]any{
-				"type":        "string",
-				"description": "关系方向: 'outgoing'（出向，默认）, 'incoming'（入向）, 或 'both'（双向）",
-				"enum":        []string{"outgoing", "incoming", "both"},
+				"type": "string", "description": "关系方向: 'outgoing'（出向，默认）, 'incoming'（入向）, 或 'both'（双向）",
+				"enum": []string{"outgoing", "incoming", "both"},
 			},
 			"depth": map[string]any{
-				"type":        "integer",
-				"description": "图遍历深度（默认 1，最大 3）",
-				"minimum":     float64(1),
-				"maximum":     float64(3),
+				"type": "integer", "description": "图遍历深度（默认 1，最大 3）",
+				"minimum": float64(1), "maximum": float64(3),
 			},
 			"project": projectProp,
 		},
 		"required": []string{"id"},
 	}, wrap(func(params map[string]any) (any, error) {
 		svc, _, err := ws.resolve(extractProject(params))
-		if err != nil {
-			return nil, err
-		}
+		if err != nil { return nil, err }
 		id, _ := params["id"].(string)
-		if id == "" {
-			return nil, fmt.Errorf("id parameter required")
-		}
+		if id == "" { return nil, fmt.Errorf("id parameter required") }
 		direction := "outgoing"
-		if v, ok := params["direction"].(string); ok && v != "" {
-			direction = v
-		}
+		if v, ok := params["direction"].(string); ok && v != "" { direction = v }
 		depth := 1
-		if v, ok := params["depth"].(float64); ok {
-			depth = int(v)
-		}
+		if v, ok := params["depth"].(float64); ok { depth = int(v) }
 		return svc.GetRelations(id, direction, depth)
 	}))
 
-	// 18. check_duplicates
-	reg.Register("check_duplicates", "检查是否存在相似的记忆卡片。在 write new memory 之前调用，避免创建重复卡片。", map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"project": projectProp,
-			"title": map[string]any{
-				"type":        "string",
-				"description": "待检查的标题",
-			},
-			"content": map[string]any{
-				"type":        "string",
-				"description": "待检查的内容（可选）",
-			},
-			"threshold": map[string]any{
-				"type":        "number",
-				"description": "相似度阈值（默认 0.3）",
-				"minimum":     float64(0),
-				"maximum":     float64(1),
-			},
-		},
-		"required": []string{"title"},
-	}, wrap(func(params map[string]any) (any, error) {
-		svc, _, err := ws.resolve(extractProject(params))
-		if err != nil {
-			return nil, err
-		}
-		title, _ := params["title"].(string)
-		if title == "" {
-			return nil, fmt.Errorf("title parameter required")
-		}
-		threshold := 0.3
-		if v, ok := params["threshold"].(float64); ok {
-			threshold = v
-		}
-		// FTS5 search on title via Recall
-		results, err := svc.Recall(title, nil, 10)
-		if err != nil {
-			return nil, err
-		}
-		var suggestions []map[string]any
-		hasDuplicates := false
-		titleLower := strings.ToLower(strings.TrimSpace(title))
-		for _, r := range results {
-			rt, _ := r["title"].(string)
-			rtLower := strings.ToLower(strings.TrimSpace(rt))
-			var score float64
-			if titleLower == rtLower {
-				score = 1.0
-			} else if shareSignificantWords(titleLower, rtLower) >= 2 {
-				score = 0.7
-			} else {
-				score = 0.4
-			}
-			if score >= threshold {
-				hasDuplicates = true
-				suggestions = append(suggestions, map[string]any{
-					"id":               r["id"],
-					"title":            rt,
-					"type":             r["type"],
-					"similarity_score": score,
-				})
-			}
-		}
-		return map[string]any{
-			"has_duplicates": hasDuplicates,
-			"suggestions":    suggestions,
-		}, nil
-	}))
-	// 19. remember_batch
-	reg.Register("remember_batch", "批量写入多张记忆卡片，减少 MCP 调用开销。返回每张卡片的成功/失败详情。", map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"memories": map[string]any{
-				"type": "array",
-				"description": "记忆卡片数组，每张卡片与 remember 工具参数格式相同",
-			},
-			"project": projectProp,
-		},
-		"required": []string{"memories"},
-	}, wrap(func(params map[string]any) (any, error) {
-		svc, _, err := ws.resolve(extractProject(params))
-		if err != nil { return nil, err }
-		raw, ok := params["memories"].([]any)
-		if !ok || len(raw) == 0 { return nil, fmt.Errorf("memories must be a non-empty array") }
-		payloads := make([]map[string]any, len(raw))
-		for i, m := range raw { payloads[i], _ = m.(map[string]any) }
-		return svc.RememberBatch(payloads)
-	}))
-
-	// 20. recall_batch
-	reg.Register("recall_batch", "按 ID 列表批量获取完整卡片内容，减少 MCP 调用开销。", map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"ids": map[string]any{
-				"type": "array",
-				"items": map[string]any{"type": "string"},
-				"description": "卡片 ID 列表",
-			},
-			"project": projectProp,
-		},
-		"required": []string{"ids"},
-	}, wrap(func(params map[string]any) (any, error) {
-		svc, _, err := ws.resolve(extractProject(params))
-		if err != nil { return nil, err }
-		raw, ok := params["ids"].([]any)
-		if !ok || len(raw) == 0 { return nil, fmt.Errorf("ids must be a non-empty array") }
-		ids := make([]string, len(raw))
-		for i, v := range raw { ids[i] = fmt.Sprint(v) }
-		return svc.RecallBatch(ids)
-	}))
-
-	// 21. list_templates
+	// 14. list_templates
 	reg.Register("list_templates", "列出当前工程可用的卡片模板（.project-memory/templates/*.yaml）。", map[string]any{
 		"type": "object",
-		"properties": map[string]any{
-			"project": projectProp,
-		},
+		"properties": map[string]any{"project": projectProp},
 	}, wrap(func(params map[string]any) (any, error) {
 		svc, _, err := ws.resolve(extractProject(params))
 		if err != nil { return nil, err }
@@ -779,13 +520,12 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		return map[string]any{"templates": names}, nil
 	}))
 
-	// 22. extract_patterns
+	// 15. extract_patterns
 	reg.Register("extract_patterns", "跨工程提取可复用的知识模式。扫描所有工程中 type=pattern 的卡片，按标签相似度聚合，返回在多个工程中出现的可迁移模式。", map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"min_projects": map[string]any{
-				"type":        "integer",
-				"description": "模式至少需要出现在几个工程中（默认 2）",
+				"type": "integer", "description": "模式至少需要出现在几个工程中（默认 2）",
 			},
 		},
 	}, wrap(func(params map[string]any) (any, error) {
