@@ -36,6 +36,8 @@ type MemoryCard struct {
 	ExpiresAt     string              `yaml:"expires_at" json:"expires_at"` // ISO timestamp, empty = never expires
 	SourceAgent   string              `yaml:"source_agent" json:"source_agent"`
 	KnowledgeKind string              `yaml:"knowledge_kind" json:"knowledge_kind"`
+	VerifiedBy    string              `yaml:"verified_by,omitempty" json:"verified_by,omitempty"`
+	OutdatedBy    string              `yaml:"outdated_by,omitempty" json:"outdated_by,omitempty"`
 	CreatedAt     string              `yaml:"created_at" json:"created_at"`
 	UpdatedAt     string              `yaml:"updated_at" json:"updated_at"`
 }

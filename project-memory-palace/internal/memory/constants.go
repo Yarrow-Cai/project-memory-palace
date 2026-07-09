@@ -15,6 +15,7 @@ var MemoryTypes = map[string]bool{
 var MemoryStatuses = map[string]bool{
 	"active": true, "stale": true, "superseded": true, "rejected": true,
 	"expired": true,
+	"needs_review": true, "verified": true,
 }
 
 var SourceKinds = map[string]bool{
@@ -84,6 +85,7 @@ var UpdateAllowedFields = map[string]bool{
 	"confidence": true, "reason": true, "relations": true,
 	"status": true, "tags": true, "expires_at": true,
 	"source_agent": true, "knowledge_kind": true, "priority": true,
+	"verified_by": true, "outdated_by": true,
 }
 
 var KnowledgeKinds = map[string]bool{"fact": true, "interpretation": true, "rule": true}

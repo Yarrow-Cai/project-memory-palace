@@ -291,6 +291,12 @@ func (s *MemoryService) UpdateMemory(memoryID string, updates map[string]any) (m
 	if kk, ok := updates["knowledge_kind"].(string); ok {
 		if kk != existing["knowledge_kind"] { changed = true; existing["knowledge_kind"] = kk }
 	}
+	if vb, ok := updates["verified_by"].(string); ok {
+		if vb != existing["verified_by"] { changed = true; existing["verified_by"] = vb }
+	}
+	if ob, ok := updates["outdated_by"].(string); ok {
+		if ob != existing["outdated_by"] { changed = true; existing["outdated_by"] = ob }
+	}
 	if !changed { return existing, nil }
 	existing["updated_at"] = now()
 card := mapToCard(existing)
