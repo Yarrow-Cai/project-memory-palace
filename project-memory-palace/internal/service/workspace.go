@@ -47,9 +47,11 @@ func NewWorkspace(workspaceDir string) (*WorkspaceService, error) {
 	}
 
 	if len(ws.projects) == 0 {
-		return nil, fmt.Errorf("workspace: no projects found in %s", workspaceDir)
+	return nil, fmt.Errorf("workspace: no projects found in %s", workspaceDir)
 	}
 
+	// Start background poller for auto-discovery of new projects
+	go ws.pollNewProjects()
 	return ws, nil
 }
 
@@ -233,6 +235,19 @@ func (ws *WorkspaceService) RefreshWorkspace() []string {
 		}
 	}
 	return added
+}
+
+// pollNewProjects periodically scans workspaceDir for new .project-memory/
+// subdirectories. Runs every 30 seconds. Never exits.
+func (ws *WorkspaceService) pollNewProjects() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		added := ws.RefreshWorkspace()
+		for _, name := range added {
+			log.Printf("pmem: auto-discovered new project: %s", name)
+		}
+	}
 }
 
 // extractProject extracts "project" string from MCP params map.

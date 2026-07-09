@@ -64,6 +64,19 @@ func buildCard(cardID string, payload map[string]any) memory.MemoryCard {
 	if sa, ok := payload["source_agent"].(string); ok {
 		card.SourceAgent = sa
 	}
+	// Apply agent trust cap based on source_agent
+	if card.SourceAgent != "" {
+		if cap, ok := memory.AgentTrustProfiles[card.SourceAgent]; ok {
+			if card.Confidence > cap {
+				card.Confidence = cap
+			}
+		} else {
+			// Unknown agent: conservative cap
+			if card.Confidence > memory.MaxConfidenceNoSource {
+				card.Confidence = memory.MaxConfidenceNoSource
+			}
+		}
+	}
 	if kk, ok := payload["knowledge_kind"].(string); ok {
 		if !memory.KnowledgeKinds[kk] {
 			kk = ""

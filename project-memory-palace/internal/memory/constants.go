@@ -68,6 +68,16 @@ const DefaultConfidence = 0.5
 const SchemaVersion = 1
 const MaxConfidenceNoSource = 0.5
 
+// AgentTrustProfiles maps source_agent identifiers to confidence caps.
+// When an agent creates a card, its confidence is capped at its trust level.
+// Agents not in this map default to 0.5 (conservative).
+var AgentTrustProfiles = map[string]float64{
+	"claude-code":   0.85,
+	"codex-cli":     0.80,
+	"hermes-agent":  0.80,
+	"manual":        1.00,
+	"human":         1.00,
+}
 var RememberRequiredFields = []string{"content", "summary", "title", "type"}
 
 var UpdateAllowedFields = map[string]bool{

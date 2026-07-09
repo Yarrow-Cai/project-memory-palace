@@ -142,7 +142,7 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 					},
 					"confidence": map[string]any{
 						"type":        "number",
-						"description": "Confidence 0.0-1.0. NOTE: capped at 0.5 unless source is provided (default: 0.5)",
+						"description": "Confidence 0.0-1.0. Auto-capped by source_agent trust profile (claude-code:0.85, codex-cli:0.80, hermes-agent:0.80, manual:1.0, unknown:0.5)",
 						"minimum":     float64(0),
 						"maximum":     float64(1),
 					},
