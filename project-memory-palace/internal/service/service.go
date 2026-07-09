@@ -97,7 +97,7 @@ func (s *MemoryService) Remember(payload map[string]any) (map[string]any, error)
 		result["path"] = path
 		result["notification"] = buildNotification(&card)
 		// Auto-synthesize rules if convention/decision card
-		go s.autoSynthesizeIfRelevant(&card)
+		s.autoSynthesizeIfRelevant(&card)
 		return result, nil
 	}
 	return nil, fmt.Errorf("remember: failed after %d attempts: %w", rememberIDAttempts, lastErr)
@@ -308,7 +308,7 @@ card := mapToCard(existing)
 	if _, err := store.WriteCard(s.projectRoot, card, true); err != nil { return nil, err }
 	if err := s.idx.Upsert(card); err != nil { return nil, err }
 	// Auto-synthesize rules if status/type change warrants it
-	go s.autoSynthesizeIfRelevant(card)
+	s.autoSynthesizeIfRelevant(card)
 	return cardToMap(card), nil
 }
 
