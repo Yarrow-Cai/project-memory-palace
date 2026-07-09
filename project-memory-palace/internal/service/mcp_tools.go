@@ -3,7 +3,6 @@ package service
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/atop/project-memory-palace/internal/audit"
 	"github.com/atop/project-memory-palace/internal/mcp"
@@ -101,7 +100,14 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 			var doc map[string]any
 			if yaml.Unmarshal(data, &doc) == nil {
 				result["rules"] = doc["rules"]
+				if syncedAt, ok := doc["synthesized_at"].(string); ok {
+					result["rules_fresh"] = true
+					result["rules_synthesized_at"] = syncedAt
+				}
 			}
+		}
+		if _, ok := result["rules_fresh"]; !ok {
+			result["rules_fresh"] = false
 		}
 		recent, _ := svc.ListRecent(5, 0, nil)
 		result["recent"] = recent
@@ -355,77 +361,7 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		return map[string]any{"results": results}, nil
 	}))
 
-	// 8. synthesize_rules
-	reg.Register("synthesize_rules", "Regenerate agent-rules.yaml from active convention and decision cards. Returns the full rules document. NOTE: init_project already returns the latest rules — use this only when you have written new memories and need fresh rules.", map[string]any{
-		"type": "object", "properties": map[string]any{"project": projectProp},
-	}, wrap(func(params map[string]any) (any, error) {
-		svc, _, err := ws.resolve(extractProject(params))
-		if err != nil { return nil, err }
-		doc, err := svc.SynthesizeRules()
-		if err != nil { return nil, err }
-		rules := make([]map[string]any, len(doc.Rules))
-		for i, r := range doc.Rules {
-			rules[i] = map[string]any{
-				"id": r.ID, "source_memory": r.SourceMemory,
-				"title": r.Title, "category": r.Category,
-				"body": r.Body, "created_at": r.CreatedAt,
-			}
-		}
-		return map[string]any{
-			"version": doc.Version, "synthesized_at": doc.SynthesizedAt,
-			"rule_count": len(doc.Rules), "rules": rules,
-		}, nil
-	}))
-
-	// 9. check_rules_freshness
-	reg.Register("check_rules_freshness", "Check if the synthesized rules are stale (i.e., newer convention/decision cards exist that have not been reflected in agent-rules.yaml). Returns stale status and the count of newer cards.", map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"project": projectProp,
-			"since": map[string]any{
-				"type": "string",
-				"description": "Optional: ISO timestamp to check freshness against. If omitted, uses the rules file synthesized_at timestamp.",
-			},
-		},
-	}, wrap(func(params map[string]any) (any, error) {
-		svc, _, err := ws.resolve(extractProject(params))
-		if err != nil { return nil, err }
-		since, _ := params["since"].(string)
-		if since == "" {
-			data, err := os.ReadFile(store.RulesPath(svc.ProjectRoot()))
-			if err != nil { return map[string]any{"stale": true, "error": "no rules file found"}, nil }
-			var doc struct { SynthesizedAt string `yaml:"synthesized_at"` }
-			if yaml.Unmarshal(data, &doc) != nil || doc.SynthesizedAt == "" {
-				return map[string]any{"stale": true, "error": "could not parse synthesized_at"}, nil
-			}
-			since = doc.SynthesizedAt
-		}
-		recent, err := svc.ListRecent(50, 0, map[string]any{"status": "active"})
-		if err != nil { return nil, err }
-		var newCards []map[string]any
-		for _, c := range recent {
-			tp, _ := c["type"].(string)
-			if tp != "convention" && tp != "decision" { continue }
-			upd, _ := c["updated_at"].(string)
-			if IsAfterTime(upd, since) {
-				newCards = append(newCards, map[string]any{"id": c["id"], "type": tp, "title": c["title"]})
-			}
-		}
-		stale := len(newCards) > 0
-		result := map[string]any{
-			"stale": stale, "rules_age": since,
-			"checked_at": time.Now().Format(time.RFC3339),
-			"newer_cards": newCards, "newer_count": len(newCards),
-		}
-		if stale {
-			result["message"] = "Rules are stale; call synthesize_rules to regenerate"
-		} else {
-			result["message"] = "Rules are up to date"
-		}
-		return result, nil
-	}))
-
-	// 10. context_for_files
+	// 8. context_for_files
 	reg.Register("context_for_files", "获取与指定文件关联的活跃记忆。传入当前编辑的文件路径，系统自动返回相关 conventions/decisions/已知问题。", map[string]any{
 		"type": "object",
 		"properties": map[string]any{

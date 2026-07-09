@@ -93,9 +93,11 @@ func (s *MemoryService) Remember(payload map[string]any) (map[string]any, error)
 		path, err := store.WriteCard(s.projectRoot, &card, false)
 		if err != nil { lastErr = err; continue }
 		if err := s.idx.Upsert(&card); err != nil { store.RemoveCard(path); return nil, fmt.Errorf("remember: index error: %w", err) }
-		result := cardToMap(&card)
+	result := cardToMap(&card)
 		result["path"] = path
 		result["notification"] = buildNotification(&card)
+		// Auto-synthesize rules if convention/decision card
+		go s.autoSynthesizeIfRelevant(&card)
 		return result, nil
 	}
 	return nil, fmt.Errorf("remember: failed after %d attempts: %w", rememberIDAttempts, lastErr)
@@ -299,6 +301,8 @@ card := mapToCard(existing)
 	}
 	if _, err := store.WriteCard(s.projectRoot, card, true); err != nil { return nil, err }
 	if err := s.idx.Upsert(card); err != nil { return nil, err }
+	// Auto-synthesize rules if status/type change warrants it
+	go s.autoSynthesizeIfRelevant(card)
 	return cardToMap(card), nil
 }
 
@@ -715,4 +719,13 @@ func stringSlicesEqual(a any, b []string) bool {
 		if existing[i] != b[i] { return false }
 	}
 	return true
+}
+
+// autoSynthesizeIfRelevant triggers rule synthesis asynchronously
+// when a convention or decision card is created or updated.
+func (s *MemoryService) autoSynthesizeIfRelevant(card *memory.MemoryCard) {
+	if card.Type != "convention" && card.Type != "decision" {
+		return
+	}
+	_, _ = s.SynthesizeRules()
 }
