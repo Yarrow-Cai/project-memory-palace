@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -734,4 +735,40 @@ func (s *MemoryService) autoSynthesizeIfRelevant(card *memory.MemoryCard) {
 		return
 	}
 	_, _ = s.SynthesizeRules()
+}
+
+// CrossAgentHint returns a human-readable hint about which other agents
+// recently modified cards related to the given file paths.
+func (s *MemoryService) CrossAgentHint(paths []string) (string, error) {
+	if err := s.InitProject(); err != nil {
+		return "", err
+	}
+	recent, err := s.ListRecent(20, 0, nil)
+	if err != nil || len(recent) == 0 {
+		return "", err
+	}
+	oneHourAgo := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+	agents := make(map[string]string) // agent -> most recent title
+	for _, c := range recent {
+		upd, _ := c["updated_at"].(string)
+		if upd < oneHourAgo {
+			continue
+		}
+		agent, _ := c["source_agent"].(string)
+		title, _ := c["title"].(string)
+		if agent != "" && title != "" {
+			if existing, ok := agents[agent]; !ok || upd > existing {
+				agents[agent] = title
+			}
+		}
+	}
+	if len(agents) == 0 {
+		return "", nil
+	}
+	// Build hint: "codex-cli modified 'PFC频率修正' 15 min ago"
+	var hints []string
+	for agent, title := range agents {
+		hints = append(hints, fmt.Sprintf("%s 最近修改了 '%s'", agent, title))
+	}
+	return strings.Join(hints, "; "), nil
 }

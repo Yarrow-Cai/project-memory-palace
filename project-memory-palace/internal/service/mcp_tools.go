@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/atop/project-memory-palace/internal/audit"
 	"github.com/atop/project-memory-palace/internal/mcp"
@@ -109,8 +110,42 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		if _, ok := result["rules_fresh"]; !ok {
 			result["rules_fresh"] = false
 		}
-		recent, _ := svc.ListRecent(5, 0, nil)
+	recent, _ := svc.ListRecent(5, 0, nil)
 		result["recent"] = recent
+		// Multi-agent change awareness: summarize recent agent activity
+		if allRecent, err := svc.ListRecent(20, 0, nil); err == nil && len(allRecent) > 0 {
+			oneHourAgo := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+			var newCards, updatedCards int
+			agents := make(map[string]bool)
+			var highlights []map[string]any
+			for _, c := range allRecent {
+				created, _ := c["created_at"].(string)
+				updated, _ := c["updated_at"].(string)
+				agent, _ := c["source_agent"].(string)
+				if created >= oneHourAgo {
+					newCards++
+				}
+				if updated >= oneHourAgo && updated != created {
+					updatedCards++
+				}
+				if agent != "" {
+					agents[agent] = true
+				}
+				if len(highlights) < 5 {
+					highlights = append(highlights, map[string]any{
+						"id": c["id"], "title": c["title"],
+						"by": agent, "when": updated,
+					})
+				}
+			}
+			agentList := make([]string, 0, len(agents))
+			for a := range agents { agentList = append(agentList, a) }
+			result["recent_changes"] = map[string]any{
+				"since": oneHourAgo,
+				"new_cards": newCards, "updated_cards": updatedCards,
+				"agents_active": agentList, "highlights": highlights,
+			}
+		}
 		// If `since` is provided, return cards changed since that timestamp
 		if since, ok := params["since"].(string); ok && since != "" {
 			changedCards, _ := svc.ListChangesSince(since, 20)
@@ -394,10 +429,14 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		if v, ok := params["limit"].(float64); ok { limit = int(v) }
 		results, err := svc.ContextForFiles(paths, limit)
 		if err != nil { return nil, err }
-		result := map[string]any{"results": results, "matched_files": len(paths)}
+	result := map[string]any{"results": results, "matched_files": len(paths)}
 		if autoDetected {
 			result["project"] = projName
 			result["auto_detected"] = true
+		}
+		// Cross-agent awareness: show recent activity from other agents
+		if ch, err := svc.CrossAgentHint(paths); err == nil && ch != "" {
+			result["cross_agent_hint"] = ch
 		}
 		return result, nil
 	}))
