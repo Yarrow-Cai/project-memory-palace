@@ -28,9 +28,19 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 	}
 
 	// 0. init_workspace
-	reg.Register("init_workspace", "初始化工作区。扫描所有可用工程，返回工程列表和简要状态。应在每个会话开始时首先调用。不创建任何文件，纯只读。", map[string]any{
-		"type": "object", "properties": map[string]any{},
+	reg.Register("init_workspace", "初始化工作区。扫描所有可用工程，返回工程列表和简要状态。应在每个会话开始时首先调用。可选 workspace 参数可切换到新的工作区目录（持久化到配置文件）。", map[string]any{
+		"type": "object", "properties": map[string]any{
+			"workspace": map[string]any{
+				"type":        "string",
+				"description": "可选: 切换到此工作区目录路径。留空则使用当前工作区。",
+			},
+		},
 	}, wrap(func(params map[string]any) (any, error) {
+		// Optional workspace switch
+		if path, ok := params["workspace"].(string); ok && path != "" {
+			if err := ws.SetWorkspace(path, ""); err != nil { return nil, err }
+			store.SaveConfig(&store.PMemConfig{Workspace: path})
+		}
 		projects, err := ws.ListProjects()
 		if err != nil { return nil, err }
 		var digest []map[string]any
@@ -78,8 +88,11 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		},
 	},
 	}, wrap(func(params map[string]any) (any, error) {
-		svc, _, err := ws.resolve(extractProject(params))
+		svc, projName, err := ws.resolve(extractProject(params))
 		if err != nil { return nil, err }
+		// Auto-set as default project + persist
+		ws.SetDefaultProject(projName)
+		store.SaveConfig(&store.PMemConfig{Workspace: ws.workspaceDir, DefaultProject: projName})
 		if err := svc.InitProject(); err != nil {
 			return nil, err
 		}

@@ -136,6 +136,10 @@ func RemoveRecent(root string) {
 }
 
 func Run(root string) {
+	if root == "." {
+		cfg, err := store.LoadConfig()
+		if err == nil && cfg.Workspace != "" { root = cfg.Workspace }
+	}
 	projectRoot = root
 	svc = service.New(projectRoot)
 	svc.InitProject()

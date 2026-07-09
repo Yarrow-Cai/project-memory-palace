@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 // WorkspaceService manages multiple project MemoryServices within a workspace
 // directory, routing MCP tool calls to the correct project.
 type WorkspaceService struct {
+	mu           sync.RWMutex
 	workspaceDir string
 	projects     map[string]*MemoryService // dirname -> service
 	defaultProj  string
@@ -90,6 +92,8 @@ func (ws *WorkspaceService) resolve(project string) (*MemoryService, string, err
 // Resolve returns the MemoryService for a project name (or default if empty).
 // Exported wrapper for callers outside the service package.
 func (ws *WorkspaceService) Resolve(project string) (*MemoryService, string, error) {
+	ws.mu.RLock()
+	defer ws.mu.RUnlock()
 	return ws.resolve(project)
 }
 
@@ -368,6 +372,50 @@ func (ws *WorkspaceService) ExtractPatterns(minProjects int) ([]map[string]any, 
 		return ci > cj
 	})
 	return filtered, nil
+}
+
+// SetWorkspace switches to a new workspace directory, re-scanning for projects.
+func (ws *WorkspaceService) SetWorkspace(path string, defaultProj string) error {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return fmt.Errorf("set workspace: %w", err)
+	}
+	newProjects := make(map[string]*MemoryService)
+	var firstProj string
+	for _, entry := range entries {
+		if !entry.IsDir() { continue }
+		dirName := entry.Name()
+		projDir := filepath.Join(path, dirName)
+		projMemoryDir := filepath.Join(projDir, ".project-memory")
+		if info, err := os.Stat(projMemoryDir); err == nil && info.IsDir() {
+			newProjects[dirName] = New(projDir)
+			if firstProj == "" { firstProj = dirName }
+		}
+	}
+	if len(newProjects) == 0 {
+		return fmt.Errorf("set workspace: no projects found in %s", path)
+	}
+	ws.workspaceDir = path
+	ws.projects = newProjects
+	if defaultProj != "" && newProjects[defaultProj] != nil {
+		ws.defaultProj = defaultProj
+	} else {
+		ws.defaultProj = firstProj
+	}
+	return nil
+}
+
+// SetDefaultProject sets the default project for the current workspace.
+func (ws *WorkspaceService) SetDefaultProject(name string) error {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	if _, ok := ws.projects[name]; !ok {
+		return fmt.Errorf("project %q not found", name)
+	}
+	ws.defaultProj = name
+	return nil
 }
 
 func tagsOverlap(a, b []string) bool {
