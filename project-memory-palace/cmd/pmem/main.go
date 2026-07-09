@@ -102,12 +102,16 @@ func cmdInit(args []string) int {
 func cmdRemember(args []string) int {
 	fs := flag.NewFlagSet("remember", flag.ContinueOnError)
 	filePath := fs.String("file", "", "Path to YAML card file")
+	tmplName := fs.String("template", "", "Template name from .project-memory/templates/<name>.yaml. 模板字段填充缺失值，显式提供的字段优先级更高。")
 	if err := fs.Parse(args); err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
 	if *filePath == "" { fmt.Fprintln(os.Stderr, "error: --file is required"); return 1 }
 	data, err := os.ReadFile(*filePath)
 	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
 	var payload map[string]any
 	if err := yaml.Unmarshal(data, &payload); err != nil { fmt.Fprintf(os.Stderr, "error: invalid YAML: %v\n", err); return 1 }
+	if *tmplName != "" {
+		payload["template"] = *tmplName
+	}
 	svc, err := newService()
 	if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
 	result, err := svc.Remember(payload)

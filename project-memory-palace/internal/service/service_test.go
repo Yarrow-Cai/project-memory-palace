@@ -1,7 +1,11 @@
 ﻿package service
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/atop/project-memory-palace/internal/store"
 )
 
 // helper creates a working MemoryService rooted at a temp directory.
@@ -234,5 +238,107 @@ func TestUpdateNoChanges(t *testing.T) {
 	}
 	if updated["status"] != "active" {
 		t.Fatalf("status changed with empty updates: %v", updated["status"])
+	}
+}
+func TestRememberWithTemplate(t *testing.T) {
+	svc := testService(t)
+	defer svc.Close()
+
+	// Create a template file in the project's templates dir
+	tmplDir := store.TemplatesDir(svc.ProjectRoot())
+	if err := os.MkdirAll(tmplDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	tmplContent := `type: convention
+title: "Template Default Title"
+summary: "Template default summary"
+content: "Template default content"
+confidence: 0.9
+tags:
+  - template-tag
+`
+	if err := os.WriteFile(filepath.Join(tmplDir, "test_template.yaml"), []byte(tmplContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Payload provides type + title + summary + content (overrides template),
+	// but NOT tags or confidence — those should come from template
+	payload := map[string]any{
+		"template": "test_template",
+		"type":     "decision",
+		"title":    "My Custom Title",
+		"summary":  "My custom summary",
+		"content":  "My custom content",
+		"source": map[string]any{
+			"kind":        "conversation",
+			"description": "Test",
+		},
+	}
+
+	card, err := svc.Remember(payload)
+	if err != nil {
+		t.Fatalf("Remember with template: %v", err)
+	}
+
+	// Explicit payload fields should take precedence
+	if card["type"] != "decision" {
+		t.Errorf("type = %v, want decision (explicit overrides template)", card["type"])
+	}
+	if card["title"] != "My Custom Title" {
+		t.Errorf("title = %v, want 'My Custom Title'", card["title"])
+	}
+
+	// Template default fields should be applied
+	tags, _ := card["tags"].([]string)
+	if len(tags) != 1 || tags[0] != "template-tag" {
+		t.Errorf("tags from template = %v, want [template-tag]", tags)
+	}
+	conf, _ := card["confidence"].(float64)
+	if conf != 0.9 {
+		t.Errorf("confidence from template = %v, want 0.9", conf)
+	}
+}
+
+func TestRememberWithTemplateNotFound(t *testing.T) {
+	svc := testService(t)
+	defer svc.Close()
+
+	payload := map[string]any{
+		"template": "nonexistent_template",
+		"type":     "decision",
+		"title":    "Test",
+		"summary":  "Test",
+		"content":  "Test",
+		"source": map[string]any{
+			"kind":        "conversation",
+			"description": "Test",
+		},
+	}
+
+	_, err := svc.Remember(payload)
+	if err == nil {
+		t.Fatal("expected error for nonexistent template")
+	}
+}
+
+func TestListTemplatesMethod(t *testing.T) {
+	svc := testService(t)
+	defer svc.Close()
+
+	tmplDir := store.TemplatesDir(svc.ProjectRoot())
+	if err := os.MkdirAll(tmplDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create one template
+	if err := os.WriteFile(filepath.Join(tmplDir, "alpha.yaml"), []byte("title: A\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	names, err := svc.ListTemplates()
+	if err != nil {
+		t.Fatalf("ListTemplates: %v", err)
+	}
+	if len(names) != 1 || names[0] != "alpha" {
+		t.Errorf("ListTemplates = %v, want [alpha]", names)
 	}
 }

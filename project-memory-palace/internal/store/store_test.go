@@ -9,6 +9,104 @@ import (
 	"github.com/atop/project-memory-palace/internal/memory"
 )
 
+// ---------- templates ----------
+
+func TestTemplatesDir(t *testing.T) {
+	got := TemplatesDir("/foo")
+	if !strings.HasSuffix(got, filepath.Join(".project-memory", "templates")) {
+		t.Errorf("TemplatesDir = %s, unexpected", got)
+	}
+}
+
+func TestLoadTemplate_OK(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(TemplatesDir(root), 0755); err != nil {
+		t.Fatal(err)
+	}
+	tmplContent := "type: decision\ntitle: \"{register_map}\"\nconfidence: 0.9\n"
+	if err := os.WriteFile(filepath.Join(TemplatesDir(root), "register_map.yaml"), []byte(tmplContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := LoadTemplate(root, "register_map")
+	if err != nil {
+		t.Fatalf("LoadTemplate: %v", err)
+	}
+	if result["type"] != "decision" {
+		t.Errorf("type = %v, want decision", result["type"])
+	}
+	if result["title"] != "{register_map}" {
+		t.Errorf("title = %v, want {register_map}", result["title"])
+	}
+}
+
+func TestLoadTemplate_NotFound(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(TemplatesDir(root), 0755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadTemplate(root, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent template")
+	}
+}
+
+func TestLoadTemplate_InvalidYAML(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(TemplatesDir(root), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(TemplatesDir(root), "bad.yaml"), []byte("invalid: [bad"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadTemplate(root, "bad")
+	if err == nil {
+		t.Fatal("expected error for invalid YAML")
+	}
+}
+
+func TestListTemplates(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(TemplatesDir(root), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"register_map.yaml", "driver_config.yaml", "notes.txt", "subdir"} {
+		p := filepath.Join(TemplatesDir(root), name)
+		if name == "subdir" {
+			os.MkdirAll(p, 0755)
+		} else {
+			os.WriteFile(p, []byte("key: val\n"), 0644)
+		}
+	}
+	names, err := ListTemplates(root)
+	if err != nil {
+		t.Fatalf("ListTemplates: %v", err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("got %d template names, want 2", len(names))
+	}
+	// Should contain register_map and driver_config, but not notes.txt or subdir
+	hasRegister := false
+	hasDriver := false
+	for _, n := range names {
+		if n == "register_map" { hasRegister = true }
+		if n == "driver_config" { hasDriver = true }
+	}
+	if !hasRegister { t.Error("missing register_map") }
+	if !hasDriver { t.Error("missing driver_config") }
+}
+
+func TestListTemplates_NoDir(t *testing.T) {
+	root := t.TempDir()
+	names, err := ListTemplates(root)
+	if err != nil {
+		t.Fatalf("ListTemplates with no dir: %v", err)
+	}
+	if names != nil {
+		t.Errorf("expected nil, got %v", names)
+	}
+}
+
+// ---------- existing tests ----------
 func testCard(id, cardType, title string) *memory.MemoryCard {
 	return &memory.MemoryCard{
 		SchemaVersion: 1,

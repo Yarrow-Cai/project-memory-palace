@@ -25,6 +25,9 @@ func New(projectRoot string) *MemoryService {
 }
 
 func (s *MemoryService) ProjectRoot() string { return s.projectRoot }
+func (s *MemoryService) ListTemplates() ([]string, error) {
+	return store.ListTemplates(s.projectRoot)
+}
 
 // Close closes the underlying index (and its SQLite connection).
 // After Close, the service must not be used without reinitialization.
@@ -72,6 +75,19 @@ func (s *MemoryService) Remember(payload map[string]any) (map[string]any, error)
 	for attempt := 0; attempt < rememberIDAttempts; attempt++ {
 		cardID, _, err := store.NextCardIdentity(s.projectRoot, dateStr)
 		if err != nil { return nil, fmt.Errorf("remember: %w", err) }
+		// Template support: load template and merge defaults (payload overrides template)
+		if tmplName, ok := payload["template"].(string); ok && tmplName != "" {
+			tmpl, err := store.LoadTemplate(s.projectRoot, tmplName)
+			if err != nil {
+				return nil, fmt.Errorf("template: %w", err)
+			}
+			for k, v := range tmpl {
+				if _, exists := payload[k]; !exists {
+					payload[k] = v
+				}
+			}
+			delete(payload, "template")
+		}
 		card := buildCard(cardID, payload)
 		if err := s.validateRelationTargets(&card); err != nil { return nil, err }
 		path, err := store.WriteCard(s.projectRoot, &card, false)

@@ -142,7 +142,7 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 					},
 					"confidence": map[string]any{
 						"type":        "number",
-						"description": "Confidence 0.0-1.0. Auto-capped by source_agent trust profile (claude-code:0.85, codex-cli:0.80, hermes-agent:0.80, manual:1.0, unknown:0.5)",
+						"description": "Confidence 0.0-1.0. NOTE: capped at 0.5 unless source is provided (default: 0.5)",
 						"minimum":     float64(0),
 						"maximum":     float64(1),
 					},
@@ -191,6 +191,10 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 					"relations": map[string]any{
 						"type":        "object",
 						"description": "Relations to other memories, e.g. {\"supersedes\": [\"mem_20260101_001\"]}",
+					},
+					"template": map[string]any{
+						"type":        "string",
+						"description": "可选模板名称，来自 .project-memory/templates/<name>.yaml。模板字段填充缺失值，显式提供的字段优先级更高。",
 					},
 				},
 				"required": []string{"type", "title", "summary", "content"},
@@ -759,6 +763,20 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		ids := make([]string, len(raw))
 		for i, v := range raw { ids[i] = fmt.Sprint(v) }
 		return svc.RecallBatch(ids)
+	}))
+
+	// 21. list_templates
+	reg.Register("list_templates", "列出当前工程可用的卡片模板（.project-memory/templates/*.yaml）。", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"project": projectProp,
+		},
+	}, wrap(func(params map[string]any) (any, error) {
+		svc, _, err := ws.resolve(extractProject(params))
+		if err != nil { return nil, err }
+		names, err := svc.ListTemplates()
+		if err != nil { return nil, err }
+		return map[string]any{"templates": names}, nil
 	}))
 
 }

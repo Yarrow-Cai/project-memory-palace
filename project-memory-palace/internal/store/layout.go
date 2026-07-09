@@ -13,7 +13,7 @@ const defaultRulesYAML = "# Agent Rules - synthesized from memory cards\nversion
 // EnsureProjectMemory creates the .project-memory directory tree and default
 // config/rule files if they do not already exist. It is safe to call repeatedly.
 func EnsureProjectMemory(projectRoot string) error {
-	dirs := []string{MemoryDir(projectRoot), CardsDir(projectRoot), RulesDir(projectRoot)}
+	dirs := []string{MemoryDir(projectRoot), CardsDir(projectRoot), RulesDir(projectRoot), TemplatesDir(projectRoot)}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d, err)
