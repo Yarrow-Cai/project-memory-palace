@@ -675,6 +675,47 @@ func (idx *MemoryIndex) HotMemories(limit int) ([]map[string]any, error) {
 	return results, rows.Err()
 }
 
+// CoverageStats returns per-module card counts for coverage analysis.
+// Columns: module, card_count, last_updated (most recent updated_at).
+func (idx *MemoryIndex) CoverageStats() ([]map[string]any, error) {
+	if err := idx.Initialize(); err != nil {
+		return nil, err
+	}
+	db, err := idx.connect()
+	if err != nil {
+		return nil, err
+	}
+	q := `SELECT m.value AS module, COUNT(*) AS card_count, MAX(mem.updated_at) AS last_updated
+FROM memories mem, json_each(mem.modules_json) m
+WHERE mem.status = 'active'
+GROUP BY m.value
+ORDER BY card_count DESC`
+	rows, err := db.Query(q)
+	if err != nil {
+		return nil, fmt.Errorf("coverage stats: %w", err)
+	}
+	defer rows.Close()
+	var results []map[string]any
+	for rows.Next() {
+		var module string
+		var count int
+		var lastUpdated sql.NullString
+		if err := rows.Scan(&module, &count, &lastUpdated); err != nil {
+			return nil, fmt.Errorf("coverage scan: %w", err)
+		}
+		lu := ""
+		if lastUpdated.Valid {
+			lu = lastUpdated.String
+		}
+		results = append(results, map[string]any{
+			"module":       module,
+			"card_count":   count,
+			"last_updated": lu,
+		})
+	}
+	return results, rows.Err()
+}
+
 func toFTSQuery(query string) string {
 	// Apply same bigram preprocessing as storage, then split into tokens
 	preprocessed := ftsPreprocess(query)

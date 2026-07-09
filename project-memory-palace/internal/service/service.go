@@ -697,6 +697,12 @@ func (s *MemoryService) ListChangesSince(since string, limit int) ([]map[string]
 	return s.idx.ListChangesSince(since, limit)
 }
 
+// CoverageStats returns per-module card counts for coverage analysis.
+func (s *MemoryService) CoverageStats() ([]map[string]any, error) {
+	if err := s.InitProject(); err != nil { return nil, err }
+	return s.idx.CoverageStats()
+}
+
 func has(slice []string, item string) bool {
 	for _, s := range slice { if s == item { return true } }
 	return false

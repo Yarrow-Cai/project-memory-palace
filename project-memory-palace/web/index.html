@@ -207,6 +207,15 @@ body.light .badge-expired{background:#fee2e2;color:#991b1b}
 .v06-bar .fill.medium{background:var(--yellow)}
 .v06-bar .fill.weak{background:var(--red)}
 
+.v06-bar .fill.weak{background:var(--red)}
+
+/* Coverage heatmap */
+.coverage-item{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)}
+.coverage-module{flex:0 0 140px;font-size:12px;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coverage-bar{flex:1;height:8px;background:var(--surface);border-radius:4px;overflow:hidden}
+.coverage-fill{height:100%;border-radius:4px;transition:width .3s}
+.coverage-count{flex:0 0 40px;font-size:11px;color:var(--text3);text-align:right}
+
 /* Knowledge kind / source agent badges */
 .kind-badge{padding:2px 8px;border-radius:999px;font-size:10px;font-weight:600;display:inline-flex;align-items:center;gap:3px}
 .kind-badge.fact{background:rgba(52,211,153,.15);color:var(--green);border:1px solid rgba(52,211,153,.2)}
@@ -965,8 +974,42 @@ function loadStats(){
       h+='<div class="stat-card"><div class="stat-num" style="color:'+cl+'">'+c+'</div><div class="stat-label">'+lb+'</div></div>';
     });
     h+='</div></div>';
+    // Append coverage heatmap section
+    h+='<div style="margin-top:24px"><h3 style="font-size:13px;font-weight:600;color:var(--text3);margin-bottom:10px">模块覆盖率</h3><div class="coverage-heatmap" id="coverage-heatmap">加载中...</div></div>';
     document.getElementById('tab-content').innerHTML=h;
+    // Load coverage data
+    api('/api/coverage').then(function(d) {
+      renderCoverage(d);
+    }).catch(function() {
+      var el=document.getElementById('coverage-heatmap');
+      if(el)el.innerHTML='<span style="color:var(--red);font-size:11px">加载失败</span>';
+    });
   });
+}
+
+}
+
+// ===== Coverage Heatmap =====
+function renderCoverage(data){
+  var modules = data.modules || (data.results) || [];
+  var maxCount = modules.length ? modules[0].card_count : 1;
+  if (!modules.length) {
+    var el=document.getElementById('coverage-heatmap');
+    if(el)el.innerHTML='<span style="color:var(--text3);font-size:11px">暂无模块数据</span>';
+    return;
+  }
+  var h = '';
+  modules.forEach(function(m) {
+    var pct = m.card_count / maxCount;
+    var color = pct > 0.7 ? 'var(--green)' : pct > 0.3 ? 'var(--yellow)' : 'var(--red)';
+    h += '<div class="coverage-item">' +
+        '<span class="coverage-module">' + esc(m.module) + '</span>' +
+        '<div class="coverage-bar"><div class="coverage-fill" style="width:' + (pct*100) + '%;background:' + color + '"></div></div>' +
+        '<span class="coverage-count">' + m.card_count + '</span>' +
+        '</div>';
+  });
+  var el=document.getElementById('coverage-heatmap');
+  if(el)el.innerHTML = h;
 }
 
 // ===== Context Menu =====

@@ -244,6 +244,8 @@ http.HandleFunc("/api/update", handleUpdate)
 	http.HandleFunc("/api/rules", handleRules)
 	http.HandleFunc("/api/count", handleCount)
 http.HandleFunc("/api/disclosure", handleDisclosure)
+	http.HandleFunc("/api/coverage", handleCoverage)
+	http.HandleFunc("/api/patterns", handlePatterns)
 	http.HandleFunc("/api/decay", handleDecay)
 	http.HandleFunc("/api/workspace/refresh", handleWorkspaceRefresh)
 	http.HandleFunc("/api/vacuum", handleVacuum)
@@ -517,6 +519,27 @@ func handleRelations(w http.ResponseWriter, r *http.Request) {
 	depth := parseIntParam(r.URL.Query().Get("depth"), 1)
 	result, err := svc.GetRelations(id, direction, depth)
 	writeWebJSONRaw(w, result, err)
+}
+
+func handleCoverage(w http.ResponseWriter, r *http.Request) {
+	mu.Lock(); defer mu.Unlock()
+	project := r.URL.Query().Get("project")
+	if project != "" {
+		svc2, _, err := ws.Resolve(project)
+		if err != nil { writeWebJSONRaw(w, nil, err); return }
+		results, err := svc2.CoverageStats()
+		writeWebJSONList(w, results, err)
+		return
+	}
+	result, err := ws.WorkspaceCoverage()
+	writeWebJSONRaw(w, result, err)
+}
+
+func handlePatterns(w http.ResponseWriter, r *http.Request) {
+	mu.Lock(); defer mu.Unlock()
+	minProjects := parseIntParam(r.URL.Query().Get("min_projects"), 2)
+	results, err := ws.ExtractPatterns(minProjects)
+	writeWebJSONList(w, results, err)
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {

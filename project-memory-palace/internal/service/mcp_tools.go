@@ -779,4 +779,19 @@ func RegisterAllTools(reg *mcp.ToolRegistry, ws *WorkspaceService, wrapHandler f
 		return map[string]any{"templates": names}, nil
 	}))
 
+	// 22. extract_patterns
+	reg.Register("extract_patterns", "跨工程提取可复用的知识模式。扫描所有工程中 type=pattern 的卡片，按标签相似度聚合，返回在多个工程中出现的可迁移模式。", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"min_projects": map[string]any{
+				"type":        "integer",
+				"description": "模式至少需要出现在几个工程中（默认 2）",
+			},
+		},
+	}, wrap(func(params map[string]any) (any, error) {
+		minProjects := 2
+		if v, ok := params["min_projects"].(float64); ok { minProjects = int(v) }
+		return ws.ExtractPatterns(minProjects)
+	}))
+
 }

@@ -509,6 +509,11 @@ http.HandleFunc("/api/project", func(w http.ResponseWriter, r *http.Request) {
 		projects, err := ws.ListProjects()
 		writeWebJSONList(w, projects, err)
 	})
+	http.HandleFunc("/api/patterns", func(w http.ResponseWriter, r *http.Request) {
+		minProjects := service.ParseIntParam(r.URL.Query().Get("min_projects"), 2)
+		results, err := ws.ExtractPatterns(minProjects)
+		writeWebJSONList(w, results, err)
+	})
 	http.HandleFunc("/api/project/set", func(w http.ResponseWriter, r *http.Request) {
 		newRoot := r.URL.Query().Get("root")
 		if newRoot == "" {
@@ -550,6 +555,19 @@ http.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
 		if direction == "" { direction = "both" }
 		depth := service.ParseIntParam(r.URL.Query().Get("depth"), 1)
 		result, err := svc.GetRelations(id, direction, depth)
+		writeWebJSONRaw(w, result, err)
+	})
+
+	http.HandleFunc("/api/coverage", func(w http.ResponseWriter, r *http.Request) {
+		project := r.URL.Query().Get("project")
+		if project != "" {
+			svc, _, err := ws.Resolve(project)
+			if err != nil { writeWebJSONRaw(w, nil, err); return }
+			results, err := svc.CoverageStats()
+			writeWebJSONList(w, results, err)
+			return
+		}
+		result, err := ws.WorkspaceCoverage()
 		writeWebJSONRaw(w, result, err)
 	})
 
